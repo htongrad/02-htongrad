@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#85263e">
+<title>Хтонград — писательская мастерская</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header class="bar"><a href="#overview" class="brand">Хтонград</a><button data-action="menu" aria-label="Настройки и копии данных">⋯</button></header>
+<main id="main"></main>
+<nav aria-label="Разделы панели" id="nav"></nav>
+<dialog id="sheet" aria-labelledby="sheet-title"><div class="row sheet-head"><h2 id="sheet-title"></h2><button data-action="close">Закрыть</button></div><div id="sheet-body"></div></dialog>
+<p id="toast" role="status" hidden></p>
+<script src="./google-sync.js" defer></script>
+<script type="module" src="./app.js"></script>
+</body></html>

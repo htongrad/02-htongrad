@@ -1,5 +1,6 @@
+import {catalog, dialogueModes} from './writing.js';
 export const forms = {
-  'Рассказ': ['Проза', '0,1–2 авт. л.', ['text'], ['epigraph','text','scene','break']],
+  'Рассказ': ['Проза', '0,1–2 авт. л.', ['text'], ['epigraph','text','scene','break','proseLine','dialogue']],
   'Повесть': ['Проза', '2–5 авт. л.', ['chapter'], ['epigraph','chapter']],
   'Роман': ['Проза', 'от 5 авт. л.', ['chapter'], ['epigraph','part','chapter']],
   'Короткий метр': ['Сценарии', '5–20 страниц', ['shot'], ['shot']],
@@ -12,15 +13,22 @@ export const forms = {
   'Эссе': ['Публицистика', '0,10–0,30 авт. л.', ['text'], ['text','subtitle','quote','break']]
 };
 const body = ['Текст','Пиши абзацами. Оформление появится в предпросмотре.',true];
-const title = ['Название','Введи короткий заголовок.'];
+const title = ['Название','Введи короткий заголовок. Поле можно оставить пустым.'];
 const reference = ['Источник','Укажи автора, издание или адрес источника. Поле можно оставить пустым.'];
 export const types = {
   text: ['Текст','Один или несколько абзацев.',{body}],
   break: ['Отбивка','Разделяет фрагменты тремя звёздочками.',{}],
   epigraph: ['Эпиграф','Короткая цитата перед произведением или главой.',{body,reference}],
   part: ['Часть','Объединяет главы.',{title},['chapter'],['chapter']],
-  chapter: ['Глава','Объединяет сцены и текст. Номер подставляется автоматически.',{title},['epigraph','text','scene','break'],['text']],
-  scene: ['Сцена','Фрагмент прозы, объединённый местом, временем или действием.',{},['text','break'],['text']],
+  chapter: ['Глава','Объединяет сцены и текст. Номер подставляется автоматически.',{title},['epigraph','text','scene','break','proseLine','dialogue'],['text']],
+  scene: ['Сцена','Фрагмент прозы, объединённый местом, временем или действием.',{},['text','break','proseLine','dialogue'],['text']],
+  dialogue: ['Диалог','Объединяет реплики. Каждая реплика начинается с отдельного абзаца.',{},['proseLine','text'],['proseLine','proseLine']],
+  proseLine: ['Реплика в прозе','Выбери положение слов автора. Панель расставит разделительные знаки.',{
+    mode:['Оформление','Выбери, где находятся слова автора и продолжение реплики.',dialogueModes],
+    body:['Прямая речь','Введи реплику без начального тире. Сохрани вопросительный или восклицательный знак, если он нужен.'],
+    attribution:['Слова автора','После реплики начни со строчной, если первое слово не имя собственное. Например, «сказала Нина».'],
+    continuation:['Продолжение реплики','При продолжении того же предложения введи строчную, если первое слово не имя собственное.']
+  }],
   shot: ['Сценарная сцена','Заголовок сцены собирается из трёх полей.',{
     placeType:['Интерьер / экстерьер','Выбери, где происходит действие.',['ИНТ.','НАТ.','ИНТ./НАТ.']],
     location:['Место','Назови место действия, например «Набережная».'],
@@ -50,20 +58,7 @@ export const types = {
   }],
   conclusion: ['Итог','Сформулируй вывод по материалу.',{body}]
 };
-export const genres = {
-  'Современная проза':'Герои и конфликты современной жизни.',
-  'Историческая проза':'Действие связано с конкретной исторической эпохой.',
-  'Детектив':'История строится вокруг загадки и расследования.',
-  'Триллер':'Напряжение держится на угрозе и неопределённости.',
-  'Фантастика':'Мир или событие строится на фантастическом допущении.',
-  'Фэнтези':'В мире действуют магия или мифологические силы.',
-  'Мистика':'Привычный мир сталкивается с необъяснимым.',
-  'Хоррор':'История вызывает страх и тревогу.',
-  'Любовная проза':'Отношения героев определяют развитие сюжета.',
-  'Драма':'Личный конфликт ведёт к важным переменам.',
-  'Комедия':'Сюжет раскрывается через комические ситуации.',
-  'Мелодрама':'Эмоциональные отношения определяют конфликт.'
-};
+export const genres = catalog;
 export const directions = ['Проза','Сценарии','Публицистика'];
 export const statuses = ['Черновик','На вычитке','Готов'];
 export const id = () => crypto.randomUUID();
@@ -80,7 +75,7 @@ export function makeText(form, title, projectId) {
   return {id:id(),form,title,projectId,genres:[],status:statuses[0],goal:'',minutes:'',pilot:false,updated:Date.now(),blocks:forms[form][2].map(makeBlock)};
 }
 export function count(blocks) {
-  return blocks.reduce((sum,{values,children}) => sum+Object.entries(values).filter(([key])=>key!=='placeType').reduce((chars,[,value])=>chars+[...value.replace(/[\r\n]/g,'')].length,0)+count(children),0);
+  return blocks.reduce((sum,{values,children}) => sum+Object.entries(values).filter(([key])=>!['placeType','mode'].includes(key)).reduce((chars,[,value])=>chars+[...value.replace(/[\r\n]/g,'')].length,0)+count(children),0);
 }
 export function locate(blocks, target) {
   for (const block of blocks) {
@@ -105,7 +100,7 @@ const dates = value => /^\d{4}-\d\d-\d\d$/.test(value) && Number.isFinite(Date.p
 const clock = value => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 function validBlocks(blocks, allowed, seen = new Set(), depth = 0) {
   return depth<8 && Array.isArray(blocks) && blocks.every(b=>{
-    if (!b || !string(b.id) || seen.has(b.id) || !allowed.includes(b.type) || !b.values) return false;
+    if (!b || (b.role!==undefined && !string(b.role)) || !string(b.id) || seen.has(b.id) || !allowed.includes(b.type) || !b.values) return false;
     seen.add(b.id);
     return Object.keys(types[b.type][2]).every(key=>string(b.values[key]))
       && Object.keys(b.values).every(key=>Object.hasOwn(types[b.type][2],key))

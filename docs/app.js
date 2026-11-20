@@ -1,8 +1,8 @@
-import { forms, types, genres, directions, statuses, id, formHint, makeBlock, makeText, count, locate, duplicate, blank, merge, valid, collections } from './model.js';
-import {genreGroups, proseSpeech, guides, flowRoles} from './writing.js';
+import { forms, types, genres, directions, statuses, id, formHint, makeBlock, makeText, count, locate, duplicate, blank, merge, valid, collections } from './model.js?v=1.2.0';
+import {genreGroups, proseSpeech, guides, flowRoles} from './writing.js?v=1.2.0';
 
 const key = 'htongrad:records:v1';
-const build = '1.1.0';
+const build = '1.2.0';
 const tabs = {overview:'Обзор',texts:'Тексты',notes:'Заметки',calendar:'Календарь'};
 const main = document.querySelector('#main');
 const nav = document.querySelector('#nav');
@@ -14,15 +14,16 @@ const google = window.htongradGoogle;
 let data = blank();
 let loadError = '';
 let localVersion = null;
+let originalDownloaded = false;
 try {
   const raw = localStorage.getItem(key);
   localVersion = raw;
-  if (raw) {
+  if (raw !== null) {
     const stored = JSON.parse(raw);
     if (!valid(stored)) throw Error();
     data = stored;
   }
-} catch { loadError = 'Не удалось открыть локальные записи. Можно восстановить данные из копии.'; }
+} catch { loadError = 'Не удалось открыть локальные записи. Обычное сохранение приостановлено.'; }
 
 let direction = directions[0];
 let project = '';
@@ -35,6 +36,7 @@ let restore = null;
 let syncOpen = false;
 let toastTimer;
 const folded = new Set();
+const drafts = new Map();
 const format = new Intl.NumberFormat('ru',{maximumFractionDigits:4});
 const dateFormat = new Intl.DateTimeFormat('ru',{day:'numeric',month:'long'});
 const html = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -60,7 +62,11 @@ function notify(message) {
   toast.textContent = message;
   toastTimer = setTimeout(()=>{toast.hidden=true},4200);
 }
-function save(next = data) {
+function save(next, {recover = false} = {}) {
+  if(loadError && !(recover && originalDownloaded)) {
+    notify(loadError);
+    return false;
+  }
   try {
     if (localStorage.getItem(key)!==localVersion) {
       notify('Записи изменились в другой вкладке. Обновите страницу перед сохранением.');
@@ -89,6 +95,16 @@ function update(group, record) {
     if (index<0) next[group].push(record);
     else next[group][index] = record;
   });
+}
+function withDraft(text) {
+  const draft = drafts.get(text.id);
+  if(!draft) return text;
+  const next = structuredClone(text);
+  for(const {block, field, value} of draft.values()) {
+    const entry = locate(next.blocks,block);
+    if(entry) entry.block.values[field] = value;
+  }
+  return next;
 }
 function go(view, item='') {
   const hash = '#'+view+(item?'/'+encode(item):'');
@@ -254,24 +270,27 @@ function editor(t) {
   const [category]=forms[t.form];
   const design=category==='Сценарии'?'screenplay':category==='Проза'?'prose':'media';
   const numbers=headings(t.blocks,{chapter:0,part:0});
+  const drafted=drafts.has(t.id);
   return '<div class="editor '+design+'"><div class="row editor-top">'+button('← Все тексты','texts')+
     button('Оглавление','outline')+'</div><h1>'+html(t.title)+'</h1><div class="row"><p class="meta">'+html([t.form,...t.genres,t.status,t.pilot?'Пилот':'',t.minutes?t.minutes+' мин':''].filter(Boolean).join(' · '))+'</p>'+
     button('Свойства','text-settings')+'</div><div class="controls tabs">'+
     button('Редактор','edit-mode','aria-pressed="'+!preview+'"')+button('Предпросмотр','preview-mode','aria-pressed="'+preview+'"')+
     makeHint('Предпросмотр','Вёрстка собирается из заполненных полей и блоков.')+
     (preview&&design==='screenplay'?button('Страницы PDF','print'):'')+'</div>'+
+    '<div class="row editor-footer" id="draft-status" '+(drafted?'':'hidden')+'><span class="meta">Черновик только в этой вкладке</span>'+
+    button('Скопировать черновик','copy-draft')+'</div>'+
     (!preview?'<div class="controls writing-tools">'+button('Направляющие','writing-guide')+button('Анализ блоков','block-analysis')+'</div>':'')+
     (preview?'<article class="reading '+design+'">'+renderedBlocks(t.blocks,numbers)+'</article>':
       blockEditor(t.blocks,'',numbers)+button('+ Добавить блок','insert','','primary'))+
-    '<div class="row editor-footer"><span class="meta" id="volume">'+volume(t)+'</span><span id="saved" class="meta" role="status"></span>'+
+    '<div class="row editor-footer"><span class="meta" id="volume">'+volume(t)+'</span><span id="saved" class="meta" role="status">'+(drafted?'Не сохранено':'')+'</span>'+
     makeHint('Объём','Один авторский лист равен 40 000 знаков с пробелами. Цель можно задать в свойствах.')+'</div></div>';
 }
 function render() {
   const [view]=route();
   nav.innerHTML=Object.entries(tabs).map(([name,label])=>'<a href="#'+name+'"'+(view===name?' aria-current="page"':'')+'>'+label+'</a>').join('');
   const t=current();
-  main.innerHTML=(loadError?'<p role="alert">'+html(loadError)+'</p>':'')+
-    (view==='texts'?(t?editor(t):texts()):view==='notes'?notes():view==='calendar'?calendar():overview());
+  main.innerHTML=(loadError?'<section class="group"><p role="alert">'+html(loadError)+'</p>'+originalExport()+'</section>':'')+
+    (view==='texts'?(t?editor(withDraft(t)):texts()):view==='notes'?notes():view==='calendar'?calendar():overview());
 }
 
 function chooseText() {
@@ -328,10 +347,11 @@ function insertMenu() {
 }
 function editBlocks(mutator,focusId) {
   const t=current();
-  const next=structuredClone(t);
+  const next=structuredClone(withDraft(t));
   mutator(next.blocks);
   next.updated=Date.now();
   if(!update('texts',next)) return;
+  drafts.delete(t.id);
   close(); render();
   if(focusId) document.getElementById('block-'+focusId)?.scrollIntoView({block:'nearest'});
 }
@@ -422,22 +442,47 @@ function outline() {
   }
   sheet('Оглавление',walk(t.blocks)||'<p class="muted">Структурные блоки появятся здесь.</p>');
 }
-function exportCopy() {
-  const url=URL.createObjectURL(new Blob([JSON.stringify(copy(),null,2)],{type:'application/json'}));
+function downloadJSON(content, name) {
+  const url=URL.createObjectURL(new Blob([content],{type:'application/json'}));
   const anchor=document.createElement('a');
   anchor.href=url;
-  anchor.download='htongrad-'+dateKey(new Date())+'.json';
+  anchor.download=name+'-'+dateKey(new Date())+'.json';
   anchor.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function originalExport() {
+  return localVersion===null?'':button('Скачать исходные данные','export-original');
+}
+function restoreSheet() {
+  if(loadError) {
+    sheet('Восстановление','<p>Записи в браузере не читаются. Восстановление заменит их данными из копии.</p>'+
+      (localVersion===null?'<p>Браузер не даёт прочитать исходные данные. Проверьте доступ к хранилищу и обновите страницу.</p>':
+        '<p>Скачайте исходные данные и убедитесь, что файл появился в загрузках.</p>'+originalExport()+
+        button('Подтвердить восстановление','confirm-restore',originalDownloaded?'':'disabled','primary')));
+    return;
+  }
+  const incoming=merge(data,restore);
+  const size=collections.reduce((sum,k)=>sum+incoming[k].length-data[k].length,0);
+  sheet('Восстановление','<p>Будет добавлено записей: '+size+'. Текущие версии совпадающих записей сохранятся.</p>'+
+    button('Подтвердить восстановление','confirm-restore','','primary'));
 }
 function offerRestore(value) {
   if (value?.format!=='htongrad-backup'||value.version!==1||!valid(value.data)) throw Error('Файл не является копией панели «Хтонград».');
   restore=value.data;
-  const incoming=merge(data,value.data);
-  const size=collections.reduce((sum,k)=>sum+incoming[k].length-data[k].length,0);
   syncOpen=false;
-  sheet('Восстановление','<p>Будет добавлено записей: '+size+'. Текущие версии совпадающих записей сохранятся.</p>'+
-    button('Подтвердить восстановление','confirm-restore','','primary'));
+  restoreSheet();
+}
+async function copyDraft() {
+  const draft=drafts.get(current()?.id);
+  if(!draft) return;
+  const text=[...draft.values()].map(change=>change.value).join('\n\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    notify('Черновик скопирован.');
+  } catch {
+    sheet('Черновик','<label>Текст для копирования<textarea id="draft-copy" rows="6" readonly>'+html(text)+'</textarea></label>');
+    sheetBody.querySelector('#draft-copy').select();
+  }
 }
 function googleSheet() {
   syncOpen=true;
@@ -451,7 +496,12 @@ function googleRefresh() {
     if(target.innerHTML!==content) target.innerHTML=content;
     target.hidden=!content;
   }
-  if(syncOpen&&dialog.open) sheetBody.innerHTML=google.html();
+  if(syncOpen&&dialog.open) {
+    const status=google.configurationStatus();
+    const target=sheetBody.querySelector('[data-google-config-status]');
+    if(target && status!==null) target.textContent=status;
+    else sheetBody.innerHTML=google.html();
+  }
 }
 
 document.addEventListener('submit',event=>{
@@ -500,7 +550,7 @@ function remove(group,value) {
   })) {
     if(group==='projects'&&project===value) project='';
     close();
-    if(group==='texts') go('texts');else render();
+    if(group==='texts') {drafts.delete(value);go('texts');} else render();
   }
 }
 document.addEventListener('input',event=>{
@@ -508,12 +558,17 @@ document.addEventListener('input',event=>{
   if(element.name==='allDay') element.form.querySelector('.time-fields').hidden=element.checked;
   if(!element.dataset.block) return;
   const t=current();
-  const next=structuredClone(t);
-  locate(next.blocks,element.dataset.block).block.values[element.dataset.field]=element.value;
+  const {block, field}=element.dataset;
+  const draft=drafts.get(t.id)??new Map();
+  draft.set(JSON.stringify([block,field]),{block,field,value:element.value});
+  drafts.set(t.id,draft);
+  const next=withDraft(t);
   next.updated=Date.now();
   const ok=update('texts',next);
+  if(ok) drafts.delete(t.id);
+  document.querySelector('#draft-status').hidden=ok;
   document.querySelector('#saved').textContent=ok?'Сохранено':'Не сохранено';
-  if(ok) document.querySelector('#volume').textContent=volume(next);
+  document.querySelector('#volume').textContent=volume(next);
 });
 document.addEventListener('change',async event=>{
   if(event.target.id==='project-filter') {project=event.target.value;render();}
@@ -532,12 +587,19 @@ document.addEventListener('click',event=>{
   if(action==='close') close();
   if(action==='menu') sheet('Настройки',button('Синхронизация Google','google')+button('Копии данных','copies')+'<p class="meta">Сборка '+build+'</p>');
   if(action==='google') googleSheet();
-  if(action==='copies') sheet('Копии данных',button('Экспортировать JSON','export','','primary')+
+  if(action==='copies') sheet('Копии данных',(loadError?originalExport():button('Экспортировать JSON','export','','primary'))+
     '<label class="group">Восстановить из файла<input id="import-file" type="file" accept=".json,application/json"></label>');
-  if(action==='export') exportCopy();
+  if(action==='export'&&!loadError) downloadJSON(JSON.stringify(copy(),null,2),'htongrad');
+  if(action==='export-original'&&loadError&&localVersion!==null) {
+    downloadJSON(localVersion,'htongrad-original');
+    originalDownloaded=true;
+    const confirmButton=sheetBody.querySelector('[data-action="confirm-restore"]');
+    if(confirmButton) confirmButton.disabled=false;
+  }
+  if(action==='copy-draft') void copyDraft();
   if(action==='confirm-restore'&&restore) {
     const merged=merge(data,restore);
-    if(save(merged)) {restore=null;close();render();notify('Записи восстановлены.');}
+    if(save(merged,{recover:true})) {restore=null;close();render();notify('Записи восстановлены.');}
   }
   if(action==='direction') {direction=value;render();}
   if(action==='texts') go('texts');
@@ -617,6 +679,11 @@ document.addEventListener('click',event=>{
 });
 dialog.addEventListener('close',()=>{syncOpen=false;retainedForm=null;});
 window.addEventListener('hashchange',()=>{preview=false;close();render();window.scrollTo(0,0);});
+window.addEventListener('beforeunload',event=>{
+  if(!drafts.size) return;
+  event.preventDefault();
+  event.returnValue=true;
+});
 google?.init({
   hasLocalRecords:()=>localVersion!==null,
   records() {

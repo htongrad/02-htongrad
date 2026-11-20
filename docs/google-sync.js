@@ -384,13 +384,14 @@
       else if (settings.pending) message = 'Есть изменения для отправки.';
       return (message ? '<p>' + esc(message) + '</p>' : '') + syncButton();
     },
+    configurationStatus() { return settings.clientId ? null : status; },
     html() {
       const disabled = busy || connecting || preparation ? ' disabled' : '';
       if (!settings.clientId) return `<form data-google-config>
         <label>Идентификатор OAuth клиента<input name="clientId" required autocapitalize="none" spellcheck="false" placeholder="…apps.googleusercontent.com"></label>
         <label>Номер проекта Google Cloud<input name="projectNumber" required inputmode="numeric"></label>
         <label>Ключ Google Picker<input name="apiKey" required autocapitalize="none" spellcheck="false"></label>
-        <button type="submit" class="action primary">Сохранить настройки</button><p role="alert" data-google-validation></p></form><p class="record" role="status">${esc(status)}</p>`;
+        <button type="submit" class="action primary">Сохранить настройки</button><p role="alert" data-google-validation></p></form><p class="record" role="status" data-google-config-status>${esc(status)}</p>`;
       return `<p class="record" role="status">${esc(status || 'Записи хранятся в браузере. Google получает резервную копию и зеркало событий.')}</p>
       <div class="controls">${syncButton()}</div>
       <div class="controls">

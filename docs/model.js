@@ -1,16 +1,18 @@
-import {catalog, dialogueModes} from './writing.js?v=1.2.0';
+import {catalog, dialogueModes} from './writing.js?v=1.3.0';
 export const forms = {
-  'Рассказ': ['Проза', '0,1–2 авт. л.', ['text'], ['epigraph','text','scene','break','proseLine','dialogue']],
-  'Повесть': ['Проза', '2–5 авт. л.', ['chapter'], ['epigraph','chapter']],
-  'Роман': ['Проза', 'от 5 авт. л.', ['chapter'], ['epigraph','part','chapter']],
-  'Короткий метр': ['Сценарии', '5–20 страниц', ['shot'], ['shot']],
-  'Полный метр': ['Сценарии', '70–120 минут, до 120 страниц', ['shot'], ['shot']],
-  'Серия': ['Сценарии', '24 или 48 минут', ['shot'], ['shot']],
-  'Статья': ['Публицистика', '0,225–0,375 авт. л.', ['lead','section'], ['lead','section','quote','source']],
-  'Интервью': ['Публицистика', '0,30–0,875 авт. л.', ['intro','qa'], ['intro','subtitle','qa','quote']],
-  'Обзор': ['Публицистика', '0,125–0,30 авт. л.', ['lead','item','conclusion'], ['lead','item','section','conclusion']],
-  'Рецензия': ['Публицистика', '0,10–0,25 авт. л.', ['work','section','conclusion'], ['work','section','quote','conclusion']],
-  'Эссе': ['Публицистика', '0,10–0,30 авт. л.', ['text'], ['text','subtitle','quote','break']]
+  'Рассказ': ['Проза', ['text'], ['epigraph','text','scene','break','proseLine','dialogue']],
+  'Повесть': ['Проза', ['chapter'], ['epigraph','chapter']],
+  'Роман': ['Проза', ['chapter'], ['epigraph','part','chapter']],
+  'Короткий метр': ['Сценарии', ['shot'], ['shot']],
+  'Полный метр': ['Сценарии', ['shot'], ['shot']],
+  'Серия': ['Сценарии', ['shot'], ['shot']],
+  'Статья': ['Публицистика', ['lead','section'], ['lead','section','quote','source']],
+  'Интервью': ['Публицистика', ['intro','qa'], ['intro','subtitle','qa','quote']],
+  'Обзор': ['Публицистика', ['lead','item','conclusion'], ['lead','item','section','conclusion']],
+  'Рецензия': ['Публицистика', ['work','section','conclusion'], ['work','section','quote','conclusion']],
+  'Эссе': ['Публицистика', ['text'], ['text','subtitle','quote','break']],
+  'Репортаж': ['Публицистика', ['lead',['section','На месте'],'quote',['section','Контекст']], ['lead','section','quote','source']],
+  'Объясняющая статья': ['Публицистика', ['lead',['section','Как это работает'],['section','Что это меняет']], ['lead','section','quote','source']]
 };
 const body = ['Текст','Пиши абзацами. Оформление появится в предпросмотре.',true];
 const title = ['Название','Введи короткий заголовок. Поле можно оставить пустым.'];
@@ -24,10 +26,10 @@ export const types = {
   scene: ['Сцена','Фрагмент прозы, объединённый местом, временем или действием.',{},['text','break','proseLine','dialogue'],['text']],
   dialogue: ['Диалог','Объединяет реплики. Каждая реплика начинается с отдельного абзаца.',{},['proseLine','text'],['proseLine','proseLine']],
   proseLine: ['Реплика в прозе','Выбери положение слов автора. Панель расставит разделительные знаки.',{
-    mode:['Оформление','Выбери, где находятся слова автора и продолжение реплики.',dialogueModes],
-    body:['Прямая речь','Введи реплику без начального тире. Сохрани вопросительный или восклицательный знак, если он нужен.'],
-    attribution:['Слова автора','После реплики начни со строчной, если первое слово не имя собственное. Например, «сказала Нина».'],
-    continuation:['Продолжение реплики','При продолжении того же предложения введи строчную, если первое слово не имя собственное.']
+    mode:['Оформление','Положение слов автора.',dialogueModes],
+    body:['Прямая речь','Реплика без начального тире.'],
+    attribution:['Слова автора','Например, «сказала Нина».'],
+    continuation:['Продолжение реплики','Продолжи с нужной буквы.']
   }],
   shot: ['Сценарная сцена','Заголовок сцены собирается из трёх полей.',{
     placeType:['Интерьер / экстерьер','Выбери, где происходит действие.',['ИНТ.','НАТ.','ИНТ./НАТ.']],
@@ -63,8 +65,8 @@ export const directions = ['Проза','Сценарии','Публицисти
 export const statuses = ['Черновик','На вычитке','Готов'];
 export const id = () => crypto.randomUUID();
 export const formHint = name => {
-  const [,size,starter] = forms[name];
-  return 'Стартовые блоки — '+starter.map(key=>types[key][0].toLowerCase()).join(', ')+'. Ориентир объёма — '+size+'.';
+  const [,starter] = forms[name];
+  return starter.map(entry=>Array.isArray(entry)?'«'+entry[1]+'»':types[entry][0]).join(' → ');
 };
 export function makeBlock(type) {
   const [, , fields, , starter = []] = types[type];
@@ -72,10 +74,14 @@ export function makeBlock(type) {
   return {id:id(),type,values,children:starter.map(makeBlock)};
 }
 export function makeText(form, title, projectId) {
-  return {id:id(),form,title,projectId,genres:[],status:statuses[0],goal:'',minutes:'',pilot:false,updated:Date.now(),blocks:forms[form][2].map(makeBlock)};
-}
-export function count(blocks) {
-  return blocks.reduce((sum,{values,children}) => sum+Object.entries(values).filter(([key])=>!['placeType','mode'].includes(key)).reduce((chars,[,value])=>chars+[...value.replace(/[\r\n]/g,'')].length,0)+count(children),0);
+  const blocks = forms[form][1].map(entry=>{
+    if (!Array.isArray(entry)) return makeBlock(entry);
+    const [type, title] = entry;
+    const block = makeBlock(type);
+    block.values.title = title;
+    return block;
+  });
+  return {id:id(),form,title,projectId,genres:[],status:statuses[0],goal:'',minutes:'',pilot:false,updated:Date.now(),blocks};
 }
 export function locate(blocks, target) {
   for (const block of blocks) {
@@ -96,6 +102,9 @@ export function merge(local, incoming) {
   }));
 }
 const string = value => typeof value === 'string';
+const validPlan = (plan, form) => plan === undefined || (
+  forms[form][0] === 'Сценарии' && plan && string(plan.logline) && string(plan.episodes)
+);
 const dates = value => /^\d{4}-\d\d-\d\d$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0,10) === value;
 const clock = value => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 function validBlocks(blocks, allowed, seen = new Set(), depth = 0) {
@@ -109,7 +118,7 @@ function validBlocks(blocks, allowed, seen = new Set(), depth = 0) {
 }
 export function valid(data) {
   if (!data || !collections.every(key=>Array.isArray(data[key]) && data[key].every(item=>item && string(item.id) && string(item.title)) && new Set(data[key].map(item=>item.id)).size===data[key].length)) return false;
-  return data.texts.every(t=>Object.hasOwn(forms,t.form) && statuses.includes(t.status) && string(t.projectId) && string(t.goal) && string(t.minutes) && typeof t.pilot==='boolean' && Number.isFinite(t.updated) && Array.isArray(t.genres) && t.genres.every(g=>Object.hasOwn(genres,g)) && validBlocks(t.blocks,forms[t.form][3]))
+  return data.texts.every(t=>Object.hasOwn(forms,t.form) && statuses.includes(t.status) && string(t.projectId) && string(t.goal) && string(t.minutes) && typeof t.pilot==='boolean' && Number.isFinite(t.updated) && Array.isArray(t.genres) && t.genres.every(g=>Object.hasOwn(genres,g)) && validPlan(t.plan,t.form) && validBlocks(t.blocks,forms[t.form][2]))
     && data.notes.every(n=>string(n.body) && string(n.projectId) && Number.isFinite(n.updated))
     && data.events.every(e=>dates(e.date) && string(e.textId) && typeof e.allDay==='boolean' && string(e.start) && string(e.end) && (e.allDay || (clock(e.start) && clock(e.end) && e.start<e.end)));
 }

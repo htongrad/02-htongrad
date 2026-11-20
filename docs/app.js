@@ -1,8 +1,8 @@
-import { forms, types, genres, directions, statuses, id, formHint, makeBlock, makeText, count, locate, duplicate, blank, merge, valid, collections } from './model.js?v=1.2.0';
-import {genreGroups, proseSpeech, guides, flowRoles} from './writing.js?v=1.2.0';
+import { forms, types, genres, directions, statuses, id, formHint, makeBlock, makeText, locate, duplicate, blank, merge, valid, collections } from './model.js?v=1.3.0';
+import {genreGroups, proseSpeech, dialogueFieldVisible, guides, flowRoles} from './writing.js?v=1.3.0';
 
 const key = 'htongrad:records:v1';
-const build = '1.2.0';
+const build = '1.3.0';
 const tabs = {overview:'Обзор',texts:'Тексты',notes:'Заметки',calendar:'Календарь'};
 const main = document.querySelector('#main');
 const nav = document.querySelector('#nav');
@@ -128,8 +128,15 @@ const submit = label => '<button class="primary" type="submit">'+label+'</button
 const records = items => items.length ? '<div class="records">'+items.join('')+'</div>' : '<p class="empty muted">Здесь пока пусто.</p>';
 const record = (title,detail,action,value) => withId('<strong>'+html(title)+'</strong><small>'+html(detail)+'</small>',action,value,'record');
 const linkTo = t => '<a href="#texts/'+encode(t.id)+'">'+html(t.title)+'</a>';
+const genreLabel = (genre, category) => category==='Сценарии'&&genre==='Историческая проза'?'Исторический':genre;
+const characterCount = value => [...value.replace(/[ \t\n\f\r]+/gu,' ').trim()].length;
+function countMarkup(markup) {
+  const template=document.createElement('template');
+  template.innerHTML=markup;
+  return characterCount(template.content.textContent);
+}
 const volume = text => {
-  const size=[...text.title].length+count(text.blocks);
+  const size=characterCount(text.title)+countMarkup(renderedBlocks(text.blocks,headings(text.blocks,{chapter:0,part:0})));
   return size.toLocaleString('ru')+' зн. · '+format.format(size/40000)+' авт. л.'+(text.goal?' из '+format.format(Number(text.goal)):'');
 };
 
@@ -217,34 +224,38 @@ function headings(blocks, state) {
 }
 function renderedBlocks(blocks, numbers) {
   return blocks.map(b=>{
-    const v = b.values;
     const content=renderedBlocks(b.children,numbers);
-    const text=v.body?paragraphs(v.body):'';
-    const heading=(tag,value)=>value?'<'+tag+'>'+html(value)+'</'+tag+'>':'';
-    switch (b.type) {
-      case 'break': return '<p class="divider" aria-label="Отбивка">* * *</p>';
-      case 'chapter':
-      case 'part': return content||v.title?heading('h2',numbers.get(b.id)+(v.title?'. '+v.title:''))+content:'';
-      case 'scene':
-      case 'dialogue': return content;
-      case 'proseLine': return proseSpeech(v).map(value=>'<p>'+html(value)+'</p>').join('');
-      case 'shot': return content||v.location||v.time?heading('h3',[v.placeType,v.location,v.time].filter(Boolean).join(' — ').toUpperCase())+content:'';
-      case 'speech': return v.speaker||v.aside||text?'<div class="speech"><div class="speaker">'+html(v.speaker.toUpperCase())+'</div>'+(v.aside?'<div class="aside">('+html(v.aside.replace(/^\((.*)\)$/,'$1'))+')</div>':'')+text+'</div>':'';
-      case 'transition': return text?'<div class="transition">'+paragraphs(v.body.toUpperCase())+'</div>':'';
-      case 'section': return heading('h3',v.title)+content;
-      case 'subtitle': return heading('h3',v.title);
-      case 'lead': return text?'<div class="lead">'+text+'</div>':'';
-      case 'quote':
-      case 'epigraph': return text?'<blockquote class="'+b.type+'">'+text+(v.reference?'<footer>'+html(v.reference)+'</footer>':'')+'</blockquote>':'';
-      case 'work': return heading('h3',v.title)+([v.author,v.year].some(Boolean)?'<p>'+html([v.author,v.year].filter(Boolean).join(' · '))+'</p>':'')+(v.url?link(v.url,'Источник'):'');
-      case 'item': return heading('h3',v.title)+text+(v.url?link(v.url,'Подробнее'):'');
-      case 'source': return v.title||v.url?'<p>'+link(v.url,v.title)+'</p>':'';
-      case 'qa': return v.question||v.answer?'<div class="interview">'+(v.question?'<strong>'+html(v.question)+'</strong>':'')+paragraphs(v.answer)+'</div>':'';
-      case 'list': return text?'<ul>'+lines(v.body).map(p=>'<li>'+html(p)+'</li>').join('')+'</ul>':'';
-      case 'conclusion': return text?'<section><h3>Итог</h3>'+text+'</section>':'';
-      default: return text;
-    }
+    return renderedBlock(b,numbers,Boolean(content))+content;
   }).join('');
+}
+const sceneHeading = v => [v.placeType,v.location.trim(),v.time.trim()].filter(Boolean).join(' — ').toUpperCase();
+function renderedBlock(b, numbers, hasContent) {
+  const v=b.values;
+  const text=v.body?paragraphs(v.body):'';
+  const heading=(tag,value)=>value.trim()?'<'+tag+'>'+html(value.trim())+'</'+tag+'>':'';
+  switch (b.type) {
+    case 'break': return '<p class="divider" aria-label="Отбивка">* * *</p>';
+    case 'chapter':
+    case 'part': return hasContent||v.title.trim()?heading('h2',numbers.get(b.id)+(v.title.trim()?'. '+v.title.trim():'')):'';
+    case 'scene':
+    case 'dialogue': return '';
+    case 'proseLine': return proseSpeech(v).map(value=>'<p>'+html(value)+'</p>').join('');
+    case 'shot': return hasContent||v.location.trim()||v.time.trim()?heading('h3',sceneHeading(v)):'';
+    case 'speech': return v.speaker||v.aside||text?'<div class="speech"><div class="speaker">'+html(v.speaker.toUpperCase())+'</div>'+(v.aside?'<div class="aside">('+html(v.aside.replace(/^\((.*)\)$/,'$1'))+')</div>':'')+text+'</div>':'';
+    case 'transition': return text?'<div class="transition">'+paragraphs(v.body.toUpperCase())+'</div>':'';
+    case 'section': return heading('h3',v.title);
+    case 'subtitle': return heading('h3',v.title);
+    case 'lead': return text?'<div class="lead">'+text+'</div>':'';
+    case 'quote':
+    case 'epigraph': return text?'<blockquote class="'+b.type+'">'+text+(v.reference?'<footer>'+html(v.reference)+'</footer>':'')+'</blockquote>':'';
+    case 'work': return heading('h3',v.title)+([v.author,v.year].some(Boolean)?'<p>'+html([v.author,v.year].filter(Boolean).join(' · '))+'</p>':'')+(v.url?link(v.url,'Источник'):'');
+    case 'item': return heading('h3',v.title)+text+(v.url?link(v.url,'Подробнее'):'');
+    case 'source': return v.title||v.url?'<p>'+link(v.url,v.title)+'</p>':'';
+    case 'qa': return v.question||v.answer?'<div class="interview">'+(v.question?'<strong>'+html(v.question)+'</strong>':'')+paragraphs(v.answer)+'</div>':'';
+    case 'list': return text?'<ul>'+lines(v.body).map(p=>'<li>'+html(p)+'</li>').join('')+'</ul>':'';
+    case 'conclusion': return text?'<section><h3>Итог</h3>'+text+'</section>':'';
+    default: return text;
+  }
 }
 function field(block, name, [label, detail, kind]) {
   const fieldId='field-'+block.id+'-'+name;
@@ -252,7 +263,9 @@ function field(block, name, [label, detail, kind]) {
   const value=block.values[name];
   const control=Array.isArray(kind)?'<select '+attrs+'>'+options(kind.map(v=>[v,v]),value)+'</select>':
     kind===true?'<textarea '+attrs+' rows="4">'+html(value)+'</textarea>':'<input '+attrs+' value="'+html(value)+'">';
-  return '<div class="field"><div class="field-head"><label for="'+html(fieldId)+'">'+html(label)+'</label>'+makeHint(label,detail)+'</div>'+control+'</div>';
+  const prosePart=block.type==='proseLine'&&['attribution','continuation'].includes(name)?
+    ' data-prose-part="'+name+'"'+(dialogueFieldVisible(block.values.mode,name)?'':' hidden'):'';
+  return '<div class="field"'+prosePart+'><div class="field-head"><label for="'+html(fieldId)+'">'+html(label)+'</label>'+makeHint(label,detail)+'</div>'+control+'</div>';
 }
 function blockEditor(blocks, parent, numbers) {
   return blocks.map((b,index)=>{
@@ -272,18 +285,20 @@ function editor(t) {
   const numbers=headings(t.blocks,{chapter:0,part:0});
   const drafted=drafts.has(t.id);
   return '<div class="editor '+design+'"><div class="row editor-top">'+button('← Все тексты','texts')+
-    button('Оглавление','outline')+'</div><h1>'+html(t.title)+'</h1><div class="row"><p class="meta">'+html([t.form,...t.genres,t.status,t.pilot?'Пилот':'',t.minutes?t.minutes+' мин':''].filter(Boolean).join(' · '))+'</p>'+
+    button('Оглавление','outline')+'</div><h1>'+html(t.title)+'</h1><div class="row"><p class="meta">'+html([t.form,...t.genres.map(genre=>genreLabel(genre,category)),t.status,t.pilot?'Пилот':'',t.minutes?'Цель '+t.minutes+' мин':''].filter(Boolean).join(' · '))+'</p>'+
     button('Свойства','text-settings')+'</div><div class="controls tabs">'+
     button('Редактор','edit-mode','aria-pressed="'+!preview+'"')+button('Предпросмотр','preview-mode','aria-pressed="'+preview+'"')+
     makeHint('Предпросмотр','Вёрстка собирается из заполненных полей и блоков.')+
     (preview&&design==='screenplay'?button('Страницы PDF','print'):'')+'</div>'+
     '<div class="row editor-footer" id="draft-status" '+(drafted?'':'hidden')+'><span class="meta">Черновик только в этой вкладке</span>'+
     button('Скопировать черновик','copy-draft')+'</div>'+
-    (!preview?'<div class="controls writing-tools">'+button('Направляющие','writing-guide')+button('Анализ блоков','block-analysis')+'</div>':'')+
+    (!preview?'<div class="controls writing-tools">'+button('Направляющие','writing-guide')+
+      button(design==='screenplay'?'Анализ сцен':'Анализ блоков','block-analysis')+
+      (design==='screenplay'?button('План сценария','screenplay-plan'):'')+'</div>':'')+
     (preview?'<article class="reading '+design+'">'+renderedBlocks(t.blocks,numbers)+'</article>':
       blockEditor(t.blocks,'',numbers)+button('+ Добавить блок','insert','','primary'))+
     '<div class="row editor-footer"><span class="meta" id="volume">'+volume(t)+'</span><span id="saved" class="meta" role="status">'+(drafted?'Не сохранено':'')+'</span>'+
-    makeHint('Объём','Один авторский лист равен 40 000 знаков с пробелами. Цель можно задать в свойствах.')+'</div></div>';
+    makeHint('Объём','40 000 знаков с пробелами = 1 авторский лист.')+'</div></div>';
 }
 function render() {
   const [view]=route();
@@ -301,17 +316,25 @@ function chooseText() {
 }
 function textForm(form,t) {
   const category=forms[form][0];
+  const formTag={'Репортаж':'Репортаж','Объясняющая статья':'Объяснение'}[form];
+  const groups=Object.entries(genreGroups[category])
+    .filter(([group])=>group!=='Беседа'||form==='Интервью')
+    .map(([group,choices])=>[group,choices.filter(choice=>choice!==formTag)]);
+  const offered=new Set(groups.flatMap(([,choices])=>choices));
+  const previous=t?.genres.filter(genre=>!offered.has(genre))??[];
+  if(previous.length) groups.push(['Ранее выбранные',previous]);
   const details='<details '+(t?.genres.length?'open':'')+'><summary>'+ (category==='Публицистика'?'Жанры и редакционные форматы':'Жанры')+'</summary>'+
-    Object.entries(genreGroups[category]).map(([group,choices])=>'<details '+(choices.some(name=>t?.genres.includes(name))?'open':'')+'><summary>'+html(group)+'</summary>'+
-    choices.map(name=>'<div class="row"><label><input type="checkbox" name="genre" value="'+html(name)+'" '+(t?.genres.includes(name)?'checked':'')+'> '+html(name)+'</label>'+
-    makeHint(name,genres[name])).join('')+'</details>').join('')+'</details>';
+    groups.map(([group,choices])=>'<details '+(choices.some(name=>t?.genres.includes(name))?'open':'')+'><summary>'+html(group)+'</summary>'+
+    choices.map(name=>'<div class="row"><label><input type="checkbox" name="genre" value="'+html(name)+'" '+(t?.genres.includes(name)?'checked':'')+'> '+html(genreLabel(name,category))+'</label>'+
+    makeHint(genreLabel(name,category),genres[name])).join('')+'</details>').join('')+'</details>';
   sheet(t?'Свойства текста':form,'<form data-kind="'+(t?'edit-text':'create-text')+'" data-form="'+html(form)+'">'+
     line('Название','title',t?.title,'text','required')+'<label>Проект<select name="projectId">'+projectOptions(t?.projectId??project)+'</select></label>'+
-    '<div class="row"><span class="muted">Ориентир: '+html(forms[form][1])+'</span>'+makeHint(form,formHint(form))+'</div>'+
+    (t?'<label>Статус<select name="status">'+options(statuses.map(s=>[s,s]),t.status)+'</select></label>':'')+
+    '<details '+(t?.goal||t?.minutes||t?.pilot||t?.genres.length?'open':'')+'><summary>Параметры текста</summary>'+
     '<div class="row"><label for="text-goal">Цель в авторских листах</label>'+makeHint('Цель','Укажи планируемый объём произведения. Поле можно оставить пустым.')+'</div><input id="text-goal" name="goal" type="number" min="0" step="0.001" value="'+html(t?.goal)+'">'+
     (category==='Сценарии'?line('Целевой хронометраж, мин','minutes',t?.minutes,'number','min="1"'):'')+
     (form==='Серия'?'<label><input type="checkbox" name="pilot" '+(t?.pilot?'checked':'')+'> Пилотная серия</label>':'')+
-    (t?'<label>Статус<select name="status">'+options(statuses.map(s=>[s,s]),t.status)+'</select></label>':'')+details+
+    details+'</details>'+
     submit(t?'Сохранить':'Создать')+'</form>'+(t?withId('Удалить текст','remove-text',t.id):''));
 }
 function noteForm(note) {
@@ -342,7 +365,7 @@ let insertion = {parent:'', after:''};
 let retainedForm;
 function insertMenu() {
   const parent=insertion.parent?findBlock(insertion.parent)?.block:null;
-  const allowed=parent?types[parent.type][3]:forms[current().form][3];
+  const allowed=parent?types[parent.type][3]:forms[current().form][2];
   sheet('Добавить блок',allowed.map(type=>'<div class="row group">'+withId(types[type][0],'add-block',type)+makeHint(types[type][0],types[type][1],'insert-again')+'</div>').join(''));
 }
 function editBlocks(mutator,focusId) {
@@ -378,7 +401,7 @@ function blockDestinations(value) {
     if (allowed?.includes(entry.block.type)) rows.push([parent,label,list.filter(b=>b.id!==value)]);
     list.filter(b=>b.id!==value).forEach(b=>visit(b.children,types[b.type][3],b.id,names.get(b.id)??(b.values.title||types[b.type][0])));
   }
-  visit(t.blocks,forms[t.form][3],'','Верхний уровень');
+  visit(t.blocks,forms[t.form][2],'','Верхний уровень');
   sheet('Переместить блок',rows.map(([parent,label,siblings])=>'<details><summary>'+html(label)+'</summary>'+
     [null,...siblings].map(b=>button(b?'После: '+html(names.get(b.id)??(b.values.title||types[b.type][0])):'В начало','move-here',
       'data-id="'+html(value)+'" data-parent="'+html(parent)+'" data-after="'+html(b?.id)+'"')).join('')+'</details>').join(''));
@@ -390,45 +413,83 @@ function writingGuide() {
   sheet('Направляющие',items.map(([title,detail])=>'<section class="group"><h3>'+html(title)+'</h3><p>'+html(detail)+'</p></section>').join('')+
     button('Литературная справка','writing-library'));
 }
+function screenplayPlan() {
+  const t=current();
+  const plan=t.plan??{};
+  sheet('План сценария','<form data-kind="screenplay-plan" data-id="'+html(t.id)+'">'+
+    '<div><label for="plan-logline">Логлайн</label><textarea id="plan-logline" name="logline" rows="2" placeholder="Герой, цель и препятствие">'+html(plan.logline)+'</textarea></div>'+
+    '<div><label for="plan-episodes">Поэпизодный план</label><textarea id="plan-episodes" name="episodes" rows="6" placeholder="Каждый эпизод с новой строки">'+html(plan.episodes)+'</textarea></div>'+
+    submit('Сохранить')+'</form>');
+}
 function blockRole(value) {
   const t=current();
   const roles=flowRoles[forms[t.form][0]];
   sheet('Роль в тексте',['',...roles].map(role=>button(html(role||'Без пометки'),'set-role',
     'data-id="'+html(value)+'" data-role="'+html(role)+'"')).join(''));
 }
-function blockAnalysis() {
-  const t=current();
-  const names=headings(t.blocks,{chapter:0,part:0});
-  const rows=[];
-  const totals=new Map();
-  function walk(blocks,depth=0) {
-    for(const b of blocks) {
-      const unit=types[b.type][0];
-      const own=count([{...b,children:[]}]);
-      const volume=count([b]);
-      totals.set(unit,(totals.get(unit)??0)+own);
-      rows.push({b,depth,volume,title:names.get(b.id)??b.values.title??unit});
-      walk(b.children,depth+1);
+function revealBlock(blocks, value) {
+  for(const block of blocks) {
+    if(block.id===value||revealBlock(block.children,value)) {
+      folded.delete(block.id);
+      return true;
     }
   }
-  walk(t.blocks);
+  return false;
+}
+function blockAnalysis() {
+  const t=withDraft(current());
+  const names=headings(t.blocks,{chapter:0,part:0});
+  const totals=new Map();
+  function measure(blocks) {
+    return blocks.map(b=>{
+      const unit=types[b.type][0];
+      const children=measure(b.children);
+      const childVolume=children.reduce((sum,row)=>sum+row.volume,0);
+      const own=countMarkup(renderedBlock(b,names,childVolume>0));
+      totals.set(unit,(totals.get(unit)??0)+own);
+      return {b,children,volume:own+childVolume,title:names.get(b.id)??(b.values.title?.trim()||unit)};
+    });
+  }
+  const rows=measure(t.blocks);
+  const total=rows.reduce((sum,row)=>sum+row.volume,0);
+  if(forms[t.form][0]==='Сценарии') {
+    sheet('Анализ сцен',(rows.length?'<p class="muted">Всего сцен — '+rows.length+' · '+total.toLocaleString('ru')+' зн.</p>':'<p>Добавь сцену.</p>')+
+      rows.map(({b,children,volume},index)=>'<details class="scene-analysis"><summary>'+
+        '<strong>'+html((index+1)+'. '+(b.values.location.trim()||b.values.time.trim()?sceneHeading(b.values):'Сцена'))+'</strong>'+
+        '<small>'+html(b.role?b.role+' · ':'')+volume.toLocaleString('ru')+' зн.</small></summary>'+
+        withId('К сцене','jump',b.id)+children.map(row=>'<div class="analysis-row">'+
+          withId(html(row.title+(row.b.values.speaker?.trim()?' · '+row.b.values.speaker.trim():'')),'jump',row.b.id)+
+          '<span>'+row.volume.toLocaleString('ru')+' зн.</span></div>').join('')+'</details>').join(''));
+    return;
+  }
   const max=rows.reduce((peak,row)=>Math.max(peak,row.volume),1);
-  const total=count(t.blocks);
+  function analysisRows(list,depth=0) {
+    return list.map(({b,children,volume,title})=>'<div class="analysis-row" style="padding-inline-start:'+Math.min(depth,3)*10+'px">'+
+      withId(html(title+(b.role?' · '+b.role:'')),'jump',b.id)+'<span>'+volume.toLocaleString('ru')+' зн.</span>'+
+      '<meter min="0" max="'+max+'" value="'+volume+'" aria-label="Объём блока"></meter></div>'+analysisRows(children,depth+1)).join('');
+  }
   sheet('Анализ блоков','<p class="muted">Полосы показывают объём блока с вложенным текстом. Сводка считает текст каждого типа один раз.</p>'+
-    (rows.length?'':'<p>Добавь блок, чтобы увидеть его в анализе.</p>')+'<div class="analysis-list">'+rows.map(({b,depth,volume,title})=>'<div class="analysis-row" style="padding-inline-start:'+Math.min(depth,3)*10+'px">'+
-      withId(html(title||types[b.type][0])+(b.role?' · '+html(b.role):''),'jump',b.id)+'<span>'+volume.toLocaleString('ru')+' зн.</span>'+
-      '<meter min="0" max="'+max+'" value="'+volume+'" aria-label="Объём блока"></meter></div>').join('')+'</div>'+
+    (rows.length?'':'<p>Добавь блок, чтобы увидеть его в анализе.</p>')+'<div class="analysis-list">'+analysisRows(rows)+'</div>'+
     '<details><summary>Распределение по типам</summary>'+[...totals].filter(([,n])=>n>0).map(([label,n])=>'<p>'+html(label)+' · '+n.toLocaleString('ru')+' зн. · '+Math.round(n*100/total)+'%</p>').join('')+'</details>');
 }
 function writingLibrary() {
-  sheet('Литературная справка','<div class="records">'+[
+  sheet('Литературная справка','<details open><summary>Прямая речь</summary>'+
+    '<p>Обычное продолжение выделяется запятыми и тире. Если реплику прерывает многоточие, оно сохраняется.</p>'+
+    '<p>— Я… — сказала она, — пока не знаю.</p>'+
+    '<p>'+link('https://orthographia.ru/punctum.php?paragraph=pg135.php','Академический справочник, § 135')+'</p></details>'+
+    '<details><summary>Объём и требования редакций</summary>'+
+    '<p>Авторский лист — 40 000 знаков с пробелами. Счётчик берёт заголовок и текст предпросмотра.</p>'+
+    '<p>Гид «Ножа» приводит ориентиры для аналитической статьи (9–15 тыс. знаков) и интервью (12–35 тыс. знаков). Проверь требования выбранной редакции перед отправкой.</p>'+
+    '<p>'+link('https://knife.media/knife-bible/','Гид для авторов «Ножа»')+'</p></details>'+
+    '<details><summary>План сценария</summary><p>В логлайне назови героя, цель и препятствие. В плане выдели отдельную строку на каждый эпизод и отметь, что меняется к его финалу.</p></details>'+
+    '<details><summary>Источники по прозе, сценарию и публицистике</summary><div class="records">'+[
     ['Грамота.ру — оформление диалога','https://gramota.ru/uchebnik/pravila/oformlenie-dilaoga'],
     ['Open University — персонаж и конфликт','https://www.open.edu/openlearn/mod/oucontent/view.php?id=101090&section=_unit5.1.1'],
     ['The Living Handbook of Narratology — время повествования','https://www-archiv.fdm.uni-hamburg.de/lhn/node/106.html'],
     ['BBC Writersroom — формат сценария','https://downloads.bbc.co.uk/writersroom/scripts/screenplay.pdf'],
     ['Purdue OWL — организация информационного текста','https://owl.purdue.edu/owl/subject_specific_writing/journalism_and_journalistic_writing/the_inverted_pyramid.html'],
     ['Журфак МГУ — жанры онлайн-медиа','https://vestnik.journ.msu.ru/books/2018/1/vostrebovannost-zhanrov-zhurnalistskikh-tekstov-v-onlaynovykh-smi-/']
-  ].map(([label,url])=>'<p>'+link(url,label)+'</p>').join('')+'</div>');
+  ].map(([label,url])=>'<p>'+link(url,label)+'</p>').join('')+'</div></details>');
 }
 function outline() {
   const t=current();
@@ -512,6 +573,14 @@ document.addEventListener('submit',event=>{
   event.preventDefault();
   const values=new FormData(form);
   const field=name=>String(values.get(name)??'').trim();
+  if(kind==='screenplay-plan') {
+    const t=get('texts',value);
+    const plan={logline:field('logline'),episodes:field('episodes')};
+    if(t&&forms[t.form][0]==='Сценарии'&&update('texts',{...t,plan,updated:Date.now()})) {
+      close();notify('План сохранён.');
+    }
+    return;
+  }
   const title=field('title');
   if(!title) {form.querySelector('[role=alert]').textContent='Введите название.';return;}
   let saved=false;
@@ -559,6 +628,11 @@ document.addEventListener('input',event=>{
   if(!element.dataset.block) return;
   const t=current();
   const {block, field}=element.dataset;
+  if(field==='mode') {
+    for(const part of element.closest('.block').querySelectorAll('[data-prose-part]')) {
+      part.hidden=!dialogueFieldVisible(element.value,part.dataset.prosePart);
+    }
+  }
   const draft=drafts.get(t.id)??new Map();
   draft.set(JSON.stringify([block,field]),{block,field,value:element.value});
   drafts.set(t.id,draft);
@@ -628,11 +702,16 @@ document.addEventListener('click',event=>{
   if(action==='outline') outline();
   if(action==='writing-guide') writingGuide();
   if(action==='writing-library') writingLibrary();
+  if(action==='screenplay-plan') screenplayPlan();
   if(action==='block-analysis') blockAnalysis();
   if(action==='block-role') blockRole(value);
   if(action==='set-role') editBlocks(blocks=>{locate(blocks,value).block.role=d.role;},value);
   if(action==='print') window.print();
-  if(action==='jump') {preview=false;close();render();document.getElementById('block-'+value)?.scrollIntoView({block:'start'});}
+  if(action==='jump') {
+    revealBlock(current().blocks,value);
+    preview=false;close();render();
+    document.getElementById('block-'+value)?.scrollIntoView({block:'start'});
+  }
   if(action==='hint') {
     if(buttonNode.closest('form')) {
       const original=buttonNode.closest('form').parentNode;

@@ -31,7 +31,7 @@ input:not([type=checkbox]),select,textarea{display:block;width:100%;background:v
 textarea{resize:vertical;min-height:95px}
 [role=alert]{color:var(--wine)}[role=alert]:empty{margin:0}
 .hint{min-width:44px;color:var(--muted);padding:0}
-.hint span{display:inline-grid;place-items:center;border:1px solid #a27885;border-radius:50%;width:19px;height:19px;font-size:12px}
+.hint span{display:inline-grid;place-items:center;border:1px solid var(--rule);border-radius:50%;width:16px;height:16px;font-size:11px}
 .tabs{border-bottom:1px solid var(--rule);margin:10px 0 14px;gap:12px}
 .tabs button{border-bottom:2px solid transparent;color:var(--muted);padding-inline:3px}
 .tabs button[aria-pressed=true]{border-color:var(--wine);color:var(--wine);font-weight:700}
@@ -112,5 +112,7 @@ nav a[aria-current=page]{font-weight:750}
 .analysis-row button{text-align:left;overflow-wrap:anywhere}.analysis-row span{font-size:.8em;color:var(--muted)}
 .analysis-row meter{grid-column:1/-1;width:100%;height:.8rem;accent-color:var(--accent);margin-bottom:.4rem}
 .analysis-row meter::-webkit-meter-optimum-value{background:var(--accent)}
+.scene-analysis{border-bottom:1px solid var(--rule)}
+.scene-analysis small{display:block;margin-inline-start:1rem}
 @media(max-width:359px){.overview-modules{grid-template-columns:minmax(0,1fr)}}
 @media print{.panel,.reading{background:#fff;color:#000}.panel{max-width:none;min-height:0}}

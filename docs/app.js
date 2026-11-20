@@ -2,6 +2,7 @@ import { forms, types, genres, directions, statuses, id, formHint, makeBlock, ma
 import {genreGroups, proseSpeech, guides, flowRoles} from './writing.js';
 
 const key = 'htongrad:records:v1';
+const build = '1.1.0';
 const tabs = {overview:'Обзор',texts:'Тексты',notes:'Заметки',calendar:'Календарь'};
 const main = document.querySelector('#main');
 const nav = document.querySelector('#nav');
@@ -133,7 +134,7 @@ function overview() {
     '</section><section class="module"><h2>Сегодня</h2>'+records(today.map(eventRow))+
     '</section><section class="module"><h2>Ближайшие 7 дней</h2>'+records(later.map(eventRow))+
     '</section><section class="module full"><div class="row"><h2>Последние заметки</h2>'+button('+ Записать идею','new-note')+'</div>'+
-    records(notes.map(noteRow))+'</section><section class="module full" id="sync-overview" '+(sync?'':'hidden')+'>'+sync+'</section></div>';
+    records(notes.map(noteRow))+'</section><section class="module full" id="sync-overview" aria-live="polite" '+(sync?'':'hidden')+'>'+sync+'</section></div>';
 }
 function texts() {
   const items = data.texts.filter(t=>forms[t.form][0]===direction&&(!project||project===t.projectId)).sort((a,b)=>b.updated-a.updated);
@@ -429,9 +430,9 @@ function exportCopy() {
   anchor.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-function offerRestore(value,fromGoogle=false) {
+function offerRestore(value) {
   if (value?.format!=='htongrad-backup'||value.version!==1||!valid(value.data)) throw Error('Файл не является копией панели «Хтонград».');
-  restore={value:value.data,fromGoogle};
+  restore=value.data;
   const incoming=merge(data,value.data);
   const size=collections.reduce((sum,k)=>sum+incoming[k].length-data[k].length,0);
   syncOpen=false;
@@ -445,7 +446,11 @@ function googleSheet() {
 }
 function googleRefresh() {
   const target=document.querySelector('#sync-overview');
-  if(target) {target.innerHTML=google.overview();target.hidden=!target.innerHTML;}
+  if(target) {
+    const content=google.overview();
+    if(target.innerHTML!==content) target.innerHTML=content;
+    target.hidden=!content;
+  }
   if(syncOpen&&dialog.open) sheetBody.innerHTML=google.html();
 }
 
@@ -525,14 +530,14 @@ document.addEventListener('click',event=>{
   const value=d.id;
   const action=d.action;
   if(action==='close') close();
-  if(action==='menu') sheet('Настройки',button('Синхронизация Google','google')+button('Копии данных','copies'));
+  if(action==='menu') sheet('Настройки',button('Синхронизация Google','google')+button('Копии данных','copies')+'<p class="meta">Сборка '+build+'</p>');
   if(action==='google') googleSheet();
   if(action==='copies') sheet('Копии данных',button('Экспортировать JSON','export','','primary')+
     '<label class="group">Восстановить из файла<input id="import-file" type="file" accept=".json,application/json"></label>');
   if(action==='export') exportCopy();
   if(action==='confirm-restore'&&restore) {
-    const merged=merge(data,restore.value);
-    if(save(merged)) {if(restore.fromGoogle) google?.restored();restore=null;close();render();notify('Записи восстановлены.');}
+    const merged=merge(data,restore);
+    if(save(merged)) {restore=null;close();render();notify('Записи восстановлены.');}
   }
   if(action==='direction') {direction=value;render();}
   if(action==='texts') go('texts');
@@ -612,5 +617,14 @@ document.addEventListener('click',event=>{
 });
 dialog.addEventListener('close',()=>{syncOpen=false;retainedForm=null;});
 window.addEventListener('hashchange',()=>{preview=false;close();render();window.scrollTo(0,0);});
-google?.init({records:()=>data,refresh:googleRefresh,offerRestore:value=>offerRestore(value,true)});
+google?.init({
+  hasLocalRecords:()=>localVersion!==null,
+  records() {
+    if(loadError) throw Error('Не удалось прочитать локальные записи. Синхронизация приостановлена.');
+    if(localStorage.getItem(key)!==localVersion) throw Error('Записи изменились в другой вкладке. Обновите панель.');
+    return data;
+  },
+  refresh:googleRefresh,
+  offerRestore
+});
 render();

@@ -1,4 +1,4 @@
-const build = '1.3.0';
+const build = '1.4.0';
 const prefix = 'htongrad-02-shell-';
 const cacheName = prefix + build;
 const scope = self.registration.scope;

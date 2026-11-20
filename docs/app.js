@@ -1,11 +1,18 @@
-import { forms, types, genres, directions, statuses, id, formHint, makeBlock, makeText, locate, duplicate, blank, merge, valid, collections } from './model.js?v=1.3.0';
-import {genreGroups, proseSpeech, dialogueFieldVisible, guides, flowRoles} from './writing.js?v=1.3.0';
+import { forms, types, genres, directions, statuses, id, formHint, makeBlock, makeText, locate, duplicate, blank, merge, valid, collections } from './model.js?v=1.4.0';
+import {genreGroups, proseSpeech, dialogueFieldVisible, guides, flowRoles} from './writing.js?v=1.4.0';
 
 const key = 'htongrad:records:v1';
-const build = '1.3.0';
-const tabs = {overview:'Обзор',texts:'Тексты',notes:'Заметки',calendar:'Календарь'};
+const build = '1.4.0';
+const tabs = {overview:'Обзор',texts:'Тексты',calendar:'Календарь',notes:'Заметки'};
 const main = document.querySelector('#main');
 const nav = document.querySelector('#nav');
+const create = document.querySelector('#create');
+const createActions = {
+  overview:['Создать запись','create-menu'],
+  texts:['Создать текст','new-text'],
+  calendar:['Создать событие','new-event'],
+  notes:['Создать заметку','new-note']
+};
 const dialog = document.querySelector('#sheet');
 const sheetTitle = document.querySelector('#sheet-title');
 const sheetBody = document.querySelector('#sheet-body');
@@ -36,9 +43,12 @@ let restore = null;
 let syncOpen = false;
 let toastTimer;
 const folded = new Set();
+const visitedTexts = new Set();
 const drafts = new Map();
 const format = new Intl.NumberFormat('ru',{maximumFractionDigits:4});
 const dateFormat = new Intl.DateTimeFormat('ru',{day:'numeric',month:'long'});
+const fullDate = new Intl.DateTimeFormat('ru',{weekday:'long',day:'numeric',month:'long'});
+const weekday = new Intl.DateTimeFormat('ru',{weekday:'short'});
 const html = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const button = (label,action,attrs='',style='') => '<button type="button" class="'+style+'" data-action="'+action+'" '+attrs+'>'+label+'</button>';
 const withId = (label,action,value,style='') => button(label,action,'data-id="'+html(value)+'"',style);
@@ -120,13 +130,16 @@ function close() {
   syncOpen=false;
   if(dialog.open) dialog.close();
 }
-const makeHint = (label, detail, parent='') => button('<span aria-hidden="true">?</span>','hint',
-  'aria-label="'+html('Подсказка. '+label)+'" data-label="'+html(label)+'" data-detail="'+html(detail)+'" data-parent="'+html(parent)+'"','hint');
+const makeHint = (label, detail) => '<details class="hint"><summary aria-label="'+html('Подсказка. '+label)+
+  '"><span aria-hidden="true">?</span></summary><p class="hint-message">'+html(detail)+'</p></details>';
 const line = (label, name, value='', type='text', extra='') =>
   '<label>'+html(label)+'<input type="'+type+'" name="'+name+'" value="'+html(value)+'" '+extra+'></label>';
 const submit = label => '<button class="primary" type="submit">'+label+'</button><p role="alert"></p>';
 const records = items => items.length ? '<div class="records">'+items.join('')+'</div>' : '<p class="empty muted">Здесь пока пусто.</p>';
-const record = (title,detail,action,value) => withId('<strong>'+html(title)+'</strong><small>'+html(detail)+'</small>',action,value,'record');
+const record = (title,detail,action,value) => withId('<strong>'+html(title)+'</strong>'+
+  (detail?'<small>'+html(detail)+'</small>':''),action,value,'record');
+const hero = (title, subtitle='', style='') => '<div class="hero '+style+'"><h1>'+html(title)+'</h1>'+
+  (subtitle?'<p>'+html(subtitle)+'</p>':'')+'</div>';
 const linkTo = t => '<a href="#texts/'+encode(t.id)+'">'+html(t.title)+'</a>';
 const genreLabel = (genre, category) => category==='Сценарии'&&genre==='Историческая проза'?'Исторический':genre;
 const characterCount = value => [...value.replace(/[ \t\n\f\r]+/gu,' ').trim()].length;
@@ -144,35 +157,50 @@ function overview() {
   let lastId;
   try {lastId=localStorage.getItem(key+':last');} catch {}
   const last = get('texts',lastId) ?? [...data.texts].sort((a,b)=>b.updated-a.updated)[0];
-  const start = dateKey(new Date());
-  const next = new Date(); next.setDate(next.getDate()+7);
-  const events = sortedEvents().filter(e=>e.date>=start&&e.date<dateKey(next));
+  const date=new Date();
+  const start=dateKey(date);
+  const tomorrow=new Date(date);
+  tomorrow.setDate(tomorrow.getDate()+1);
+  const next=new Date(date);
+  next.setDate(next.getDate()+7);
+  const events=sortedEvents().filter(e=>e.date>=start&&e.date<=dateKey(next));
   const notes = [...data.notes].sort((a,b)=>b.updated-a.updated).slice(0,3);
   const today=events.filter(e=>e.date===start);
   const later=events.filter(e=>e.date!==start);
   const sync=google?.overview()??'';
-  return '<div class="hero"><h1>Обзор</h1><p>'+html(showDate(start))+'</p></div>'+
-    '<div class="overview-modules"><section class="module full"><h2>Продолжить работу</h2>'+
-    (last?records([record(last.title,last.form+' · '+last.status,'open-text',last.id)]):button('+ Создать текст','new-text','','primary'))+
-    '</section><section class="module"><h2>Сегодня</h2>'+records(today.map(eventRow))+
-    '</section><section class="module"><h2>Ближайшие 7 дней</h2>'+records(later.map(eventRow))+
-    '</section><section class="module full"><div class="row"><h2>Последние заметки</h2>'+button('+ Записать идею','new-note')+'</div>'+
-    records(notes.map(noteRow))+'</section><section class="module full" id="sync-overview" aria-live="polite" '+(sync?'':'hidden')+'>'+sync+'</section></div>';
+  const caption=fullDate.format(date);
+  return hero('Обзор',caption[0].toUpperCase()+caption.slice(1))+
+    '<div class="overview-modules"><section class="module"><h2>Продолжить работу</h2>'+
+    (last?records([record(last.title,last.form+' · '+last.status,'open-text',last.id)]):'<p class="empty muted">Нет текстов</p>')+
+    '</section><section class="module"><h2>Сегодня</h2>'+records(today.map(event=>agendaRow(event)))+
+    '</section><section class="module"><div class="module-heading"><h2>Следующие 7 дней</h2>'+
+    '<small>'+html(dateFormat.formatRange(tomorrow,next))+'</small></div>'+records(later.map(event=>agendaRow(event,true)))+
+    '</section><section class="module"><h2>Последние заметки</h2>'+records(notes.map(noteRow))+
+    '</section><section class="module" id="sync-module" '+(sync?'':'hidden')+'><h2>Google</h2>'+
+    '<div id="sync-overview" aria-live="polite">'+sync+'</div></section></div>';
 }
 function texts() {
   const items = data.texts.filter(t=>forms[t.form][0]===direction&&(!project||project===t.projectId)).sort((a,b)=>b.updated-a.updated);
-  return '<div class="row page-title"><h1>Тексты</h1>'+button('+ Новый текст','new-text','','primary')+'</div>'+
+  return hero('Тексты','','page-title')+
     '<div class="controls tabs">'+directions.map(d=>withId(d,'direction',d).replace('data-id=', 'aria-pressed="'+(d===direction)+'" data-id=')).join('')+'</div>'+
-    '<div class="row"><label>Проект<select id="project-filter">'+options([['','Все проекты'],...data.projects.map(p=>[p.id,p.title])],project)+'</select></label>'+
-    button('Управление проектами','projects')+'</div><section class="group">'+records(items.map(t=>record(t.title,t.form+' · '+t.status+(t.projectId&&get('projects',t.projectId)?' · '+get('projects',t.projectId).title:''),'open-text',t.id)))+'</section>';
+    (data.projects.length?'<label class="project-filter">Проект<select id="project-filter">'+options([['','Все проекты'],...data.projects.map(p=>[p.id,p.title])],project)+'</select></label>':'')+
+    records(items.map(t=>record(t.title,t.form+' · '+t.status+(t.projectId&&get('projects',t.projectId)?' · '+get('projects',t.projectId).title:''),'open-text',t.id)));
 }
 const noteRow = n => record(n.title,get('projects',n.projectId)?.title||n.body.slice(0,95),'edit-note',n.id);
 function notes() {
-  return '<div class="row page-title"><h1>Заметки</h1>'+button('+ Новая заметка','new-note','','primary')+'</div>'+
+  return hero('Заметки','','page-title')+
     records([...data.notes].sort((a,b)=>b.updated-a.updated).map(noteRow));
 }
 const sortedEvents = () => [...data.events].sort((a,b)=>(a.date+a.start).localeCompare(b.date+b.start));
 const eventRow = e => record(e.title,showDate(e.date)+' · '+(e.allDay?'Весь день':e.start+'–'+e.end)+(get('texts',e.textId)?' · '+get('texts',e.textId).title:''),'edit-event',e.id);
+function agendaRow(event, upcoming=false) {
+  const date=new Date(event.date+'T12:00:00');
+  const time=event.allDay?'Весь день':event.start;
+  const label=upcoming?date.getDate()+' '+weekday.format(date):time;
+  const detail=[upcoming?time:'',get('texts',event.textId)?.title].filter(Boolean).join(' · ');
+  return withId('<span class="agenda-time">'+html(label)+'</span><span><strong>'+html(event.title)+'</strong>'+
+    (detail?'<small>'+html(detail)+'</small>':'')+'</span>','edit-event',event.id,'record agenda-event');
+}
 function calendarRange() {
   const first = new Date(calendarDate);
   const end = new Date(calendarDate);
@@ -186,19 +214,21 @@ function monthGrid() {
   const offset=(month.getDay()+6)%7;
   const days=new Date(month.getFullYear(),month.getMonth()+1,0).getDate();
   const marked=new Set(data.events.map(e=>e.date));
+  const today=dateKey(new Date());
   return '<div class="days">'+['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(day=>'<span>'+day+'</span>').join('')+
     '<span aria-hidden="true"></span>'.repeat(offset)+Array.from({length:days},(_,i)=>{
       const value=dateKey(new Date(month.getFullYear(),month.getMonth(),i+1));
       const withEvents=marked.has(value);
-      return button(String(i+1)+(withEvents?'<i aria-hidden="true"></i>':''),'calendar-day',
-        'data-id="'+value+'" aria-pressed="'+(selectedDay===value)+'" aria-label="'+html(showDate(value)+(withEvents?' — есть события':''))+'"');
+      return button('<span class="day-number">'+(i+1)+(withEvents?'<i aria-hidden="true"></i>':'')+'</span>','calendar-day',
+        'data-id="'+value+'" aria-pressed="'+(selectedDay===value)+'"'+(today===value?' aria-current="date"':'')+
+        ' aria-label="'+html(showDate(value)+(withEvents?' — есть события':''))+'"');
     }).join('')+'</div>';
 }
 function calendar() {
   const [start,end]=calendarRange();
   const label=filter==='month'?new Intl.DateTimeFormat('ru',{month:'long',year:'numeric'}).format(calendarDate):
     filter==='day'?showDate(start):showDate(start)+' — '+dateFormat.format(new Date(new Date(end+'T12:00:00').setDate(new Date(end+'T12:00:00').getDate()-1)));
-  return '<div class="row page-title"><h1>Календарь</h1>'+button('+ Событие','new-event','','primary')+'</div>'+
+  return hero('Календарь','','page-title')+
     '<div class="controls tabs">'+Object.entries({day:'День',week:'Неделя',month:'Месяц'}).map(([v,label])=>button(label,'period','data-id="'+v+'" aria-pressed="'+(filter===v)+'"')).join('')+'</div>'+
     '<div class="module month"><div class="month-controls">'+button('‹','calendar-prev','aria-label="Предыдущий период"')+'<strong>'+html(label)+'</strong>'+button('›','calendar-next','aria-label="Следующий период"')+'</div>'+(filter==='month'?monthGrid()+(selectedDay?'<div class="row"><small>'+html(showDate(selectedDay))+'</small>'+button('Весь месяц','calendar-all')+'</div>':''):'')+'</div>'+
     records(sortedEvents().filter(e=>filter==='month'&&selectedDay>=start&&selectedDay<end?e.date===selectedDay:e.date>=start&&e.date<end).map(eventRow));
@@ -257,7 +287,7 @@ function renderedBlock(b, numbers, hasContent) {
     default: return text;
   }
 }
-function field(block, name, [label, detail, kind]) {
+function field(block, name, [label, detail, kind], compact) {
   const fieldId='field-'+block.id+'-'+name;
   const attrs='id="'+html(fieldId)+'" data-block="'+html(block.id)+'" data-field="'+name+'"';
   const value=block.values[name];
@@ -265,45 +295,60 @@ function field(block, name, [label, detail, kind]) {
     kind===true?'<textarea '+attrs+' rows="4">'+html(value)+'</textarea>':'<input '+attrs+' value="'+html(value)+'">';
   const prosePart=block.type==='proseLine'&&['attribution','continuation'].includes(name)?
     ' data-prose-part="'+name+'"'+(dialogueFieldVisible(block.values.mode,name)?'':' hidden'):'';
-  return '<div class="field"'+prosePart+'><div class="field-head"><label for="'+html(fieldId)+'">'+html(label)+'</label>'+makeHint(label,detail)+'</div>'+control+'</div>';
+  const hint=!compact&&(name==='body'||name==='answer')?makeHint(label,detail):'';
+  const caption='<label '+(compact?'class="sr-only" ':'')+'for="'+html(fieldId)+'">'+html(label)+'</label>';
+  return '<div class="field"'+prosePart+'>'+(compact?caption:'<div class="field-head">'+caption+hint+'</div>')+control+'</div>';
 }
 function blockEditor(blocks, parent, numbers) {
-  return blocks.map((b,index)=>{
-    const [label,detail,fields,children]=types[b.type];
+  return blocks.map(b=>{
+    const [label,,fields,children]=types[b.type];
     const name=numbers.get(b.id)?numbers.get(b.id)+(b.values.title?'. '+b.values.title:''):(b.values.title||label);
-    const content=folded.has(b.id)?'':Object.entries(fields).map(([k,spec])=>field(b,k,spec)).join('')+
+    const collapsed=folded.has(b.id);
+    const entries=Object.entries(fields);
+    const compact=entries.length===1&&entries[0][0]==='body';
+    const content=collapsed?'':entries.map(([k,spec])=>field(b,k,spec,compact)).join('')+
       (b.type==='break'?'<div class="divider">* * *</div>':'')+
       (children?'<div class="nested">'+blockEditor(b.children,b.id,numbers)+button('+ Добавить блок','insert','data-parent="'+html(b.id)+'"','insert')+'</div>':'');
-    return '<section class="block" id="block-'+html(b.id)+'"><div class="block-head"><strong>'+html(name)+(b.role?' <small>· '+html(b.role)+'</small>':'')+'</strong>'+makeHint(label,detail)+
-      button('⋯','block-menu','data-id="'+html(b.id)+'" aria-label="Действия блока '+html(label)+'"')+'</div>'+content+'</section>'+
-      (index<blocks.length-1?button('+ Вставить между блоками','insert','data-parent="'+html(parent)+'" data-after="'+html(b.id)+'"','insert'):'');
+    const title='<strong>'+html(name)+(b.role?' <small>· '+html(b.role)+'</small>':'')+'</strong>';
+    return '<section class="block" id="block-'+html(b.id)+'"><div class="block-head">'+
+      button(title+(collapsed?'<span aria-hidden="true" class="chevron">›</span>':''),'fold',
+        'id="toggle-'+html(b.id)+'" data-id="'+html(b.id)+'" aria-expanded="'+!collapsed+'" aria-controls="content-'+html(b.id)+'"','block-title')+
+      (compact&&!collapsed?makeHint(fields.body[0],fields.body[1]):'')+
+      button('⋯','block-menu','data-id="'+html(b.id)+'" data-parent="'+html(parent)+'" aria-label="Действия блока '+html(label)+'"','icon-button')+
+      '</div><div class="block-content'+(compact?' compact-field':'')+'" id="content-'+html(b.id)+'" '+(collapsed?'hidden':'')+'>'+content+'</div></section>';
   }).join('');
 }
 function editor(t) {
   const [category]=forms[t.form];
   const design=category==='Сценарии'?'screenplay':category==='Проза'?'prose':'media';
+  if(!visitedTexts.has(t.id)) {
+    t.blocks.filter(block=>block.type==='chapter'||block.type==='part').slice(1).forEach(block=>folded.add(block.id));
+    visitedTexts.add(t.id);
+  }
   const numbers=headings(t.blocks,{chapter:0,part:0});
   const drafted=drafts.has(t.id);
   return '<div class="editor '+design+'"><div class="row editor-top">'+button('← Все тексты','texts')+
-    button('Оглавление','outline')+'</div><h1>'+html(t.title)+'</h1><div class="row"><p class="meta">'+html([t.form,...t.genres.map(genre=>genreLabel(genre,category)),t.status,t.pilot?'Пилот':'',t.minutes?'Цель '+t.minutes+' мин':''].filter(Boolean).join(' · '))+'</p>'+
-    button('Свойства','text-settings')+'</div><div class="controls tabs">'+
-    button('Редактор','edit-mode','aria-pressed="'+!preview+'"')+button('Предпросмотр','preview-mode','aria-pressed="'+preview+'"')+
-    makeHint('Предпросмотр','Вёрстка собирается из заполненных полей и блоков.')+
-    (preview&&design==='screenplay'?button('Страницы PDF','print'):'')+'</div>'+
+    button('⋯','text-menu','aria-label="Свойства и команды текста" aria-haspopup="dialog"','icon-button')+
+    '</div><h1>'+html(t.title)+'</h1><p class="meta">'+html([t.form,...t.genres.map(genre=>genreLabel(genre,category)),t.status,t.pilot?'Пилот':'',t.minutes?'Цель '+t.minutes+' мин':''].filter(Boolean).join(' · '))+
+    '</p><div class="segments editor-modes">'+button('Редактор','edit-mode','aria-pressed="'+!preview+'"')+
+    button('Предпросмотр','preview-mode','aria-pressed="'+preview+'"')+'</div>'+
+    (preview&&design==='screenplay'?'<div class="preview-tools">'+button('Страницы PDF','print','','action')+'</div>':'')+
     '<div class="row editor-footer" id="draft-status" '+(drafted?'':'hidden')+'><span class="meta">Черновик только в этой вкладке</span>'+
     button('Скопировать черновик','copy-draft')+'</div>'+
-    (!preview?'<div class="controls writing-tools">'+button('Направляющие','writing-guide')+
-      button(design==='screenplay'?'Анализ сцен':'Анализ блоков','block-analysis')+
-      (design==='screenplay'?button('План сценария','screenplay-plan'):'')+'</div>':'')+
+    (!preview?'<div class="row writing-tools">'+button('Оглавление','outline','','action')+
+      button('Инструменты','writing-tools','aria-haspopup="dialog"','action')+'</div>':'')+
     (preview?'<article class="reading '+design+'">'+renderedBlocks(t.blocks,numbers)+'</article>':
       blockEditor(t.blocks,'',numbers)+button('+ Добавить блок','insert','','primary'))+
-    '<div class="row editor-footer"><span class="meta" id="volume">'+volume(t)+'</span><span id="saved" class="meta" role="status">'+(drafted?'Не сохранено':'')+'</span>'+
-    makeHint('Объём','40 000 знаков с пробелами = 1 авторский лист.')+'</div></div>';
+    '<div class="row editor-footer"><span class="meta" id="volume">'+volume(t)+'</span><span id="saved" class="meta" role="status">'+(drafted?'Не сохранено':'')+'</span></div></div>';
 }
 function render() {
   const [view]=route();
   nav.innerHTML=Object.entries(tabs).map(([name,label])=>'<a href="#'+name+'"'+(view===name?' aria-current="page"':'')+'>'+label+'</a>').join('');
-  const t=current();
+  const t=view==='texts'?current():null;
+  const [createLabel, action]=createActions[view];
+  create.hidden=Boolean(t||loadError);
+  create.dataset.action=action;
+  create.setAttribute('aria-label',createLabel);
   main.innerHTML=(loadError?'<section class="group"><p role="alert">'+html(loadError)+'</p>'+originalExport()+'</section>':'')+
     (view==='texts'?(t?editor(withDraft(t)):texts()):view==='notes'?notes():view==='calendar'?calendar():overview());
 }
@@ -312,7 +357,7 @@ function chooseText() {
   const category = direction;
   const choices=Object.entries(forms).filter(([,value])=>value[0]===category);
   sheet('Новый текст','<div class="controls">'+directions.map(d=>withId(d,'new-direction',d,d===category?'primary':'')).join('')+
-    '</div>'+choices.map(([name])=>'<div class="row group">'+withId(html(name),'new-format',name)+makeHint(name,formHint(name),'choose-text')+'</div>').join(''));
+    '</div>'+choices.map(([name])=>'<div class="row group">'+withId(html(name),'new-format',name)+makeHint(name,formHint(name))+'</div>').join(''));
 }
 function textForm(form,t) {
   const category=forms[form][0];
@@ -345,8 +390,10 @@ function noteForm(note) {
 }
 function eventForm(event) {
   const linked=event&&get('texts',event.textId);
+  const calendarDay=filter==='month'&&selectedDay?selectedDay:dateKey(calendarDate);
+  const initialDay=route()[0]==='calendar'?calendarDay:dateKey(new Date());
   sheet(event?'Событие':'Новое событие','<form data-kind="event" data-id="'+html(event?.id)+'">'+
-    line('Название','title',event?.title,'text','required')+line('Дата','date',event?.date??(filter==='month'&&selectedDay?selectedDay:dateKey(calendarDate)),'date','required')+
+    line('Название','title',event?.title,'text','required')+line('Дата','date',event?.date??initialDay,'date','required')+
     '<label><input type="checkbox" name="allDay" '+(!event||event.allDay?'checked':'')+'> Весь день</label>'+
     '<div class="time-fields" '+(!event||event.allDay?'hidden':'')+'>'+line('Начало','start',event?.start??'12:00','time')+
     line('Окончание','end',event?.end??'13:00','time')+'</div><label>Текст<select name="textId">'+textOptions(event?.textId??'')+'</select></label>'+
@@ -362,11 +409,10 @@ function editProject(p) {
     withId('Удалить проект','remove-project',p.id));
 }
 let insertion = {parent:'', after:''};
-let retainedForm;
 function insertMenu() {
   const parent=insertion.parent?findBlock(insertion.parent)?.block:null;
   const allowed=parent?types[parent.type][3]:forms[current().form][2];
-  sheet('Добавить блок',allowed.map(type=>'<div class="row group">'+withId(types[type][0],'add-block',type)+makeHint(types[type][0],types[type][1],'insert-again')+'</div>').join(''));
+  sheet('Добавить блок',allowed.map(type=>'<div class="row group">'+withId(types[type][0],'add-block',type)+makeHint(types[type][0],types[type][1])+'</div>').join(''));
 }
 function editBlocks(mutator,focusId) {
   const t=current();
@@ -378,19 +424,20 @@ function editBlocks(mutator,focusId) {
   close(); render();
   if(focusId) document.getElementById('block-'+focusId)?.scrollIntoView({block:'nearest'});
 }
-function blockActions(value) {
+function blockActions(value, parent) {
   const entry=findBlock(value);
   const {block,siblings}=entry;
   const index=siblings.indexOf(block);
-  const action=(label,key,detail)=>'<div class="row">'+withId(label,key,value)+makeHint(label,detail,'block-menu:'+value)+'</div>';
-  sheet(types[block.type][0],
-    action(folded.has(value)?'Развернуть':'Свернуть','fold','Показывает или скрывает содержимое блока.')+
-    action('Дублировать','duplicate','Создаёт отдельную копию блока и его содержимого.')+
-    (index>0?action('Выше','block-up','Перемещает блок выше вместе с содержимым.'):'')+
-    (index<siblings.length-1?action('Ниже','block-down','Перемещает блок ниже вместе с содержимым.'):'')+
-    action('Переместить…','block-move','Позволяет выбрать положение и допустимый раздел.')+
-    action('Роль в тексте','block-role','Добавляет авторскую пометку для анализа структуры. Она остаётся в редакторе.')+
-    action('Удалить','remove-block','Удаляет блок вместе с вложенным текстом.'));
+  const [label,detail,fields]=types[block.type];
+  const action=(label,key)=>withId(label,key,value);
+  sheet(label,'<div class="menu-list">'+
+    button('Вставить следом','insert','data-parent="'+html(parent)+'" data-after="'+html(value)+'"')+
+    action('Дублировать','duplicate')+
+    (index>0?action('Выше','block-up'):'')+
+    (index<siblings.length-1?action('Ниже','block-down'):'')+
+    action('Переместить…','block-move')+action('Роль в тексте','block-role')+action('Удалить','remove-block')+'</div>'+
+    '<details class="block-help"><summary>Подсказки к блоку</summary><p>'+html(detail)+'</p>'+
+    Object.values(fields).map(([name,hint])=>'<p><strong>'+html(name)+'</strong> '+html(hint)+'</p>').join('')+'</details>');
 }
 function blockDestinations(value) {
   const t=current();
@@ -555,7 +602,7 @@ function googleRefresh() {
   if(target) {
     const content=google.overview();
     if(target.innerHTML!==content) target.innerHTML=content;
-    target.hidden=!content;
+    document.querySelector('#sync-module').hidden=!content;
   }
   if(syncOpen&&dialog.open) {
     const status=google.configurationStatus();
@@ -652,6 +699,10 @@ document.addEventListener('change',async event=>{
   }
 });
 document.addEventListener('click',event=>{
+  const hint=event.target.closest('.hint');
+  for(const opened of document.querySelectorAll('.hint[open]')) {
+    if(opened!==hint) opened.open=false;
+  }
   const buttonNode=event.target.closest('button');
   if(!buttonNode) return;
   const d=buttonNode.dataset;
@@ -659,7 +710,10 @@ document.addEventListener('click',event=>{
   const value=d.id;
   const action=d.action;
   if(action==='close') close();
-  if(action==='menu') sheet('Настройки',button('Синхронизация Google','google')+button('Копии данных','copies')+'<p class="meta">Сборка '+build+'</p>');
+  if(action==='menu') sheet('Настройки','<div class="menu-list">'+button('Синхронизация Google','google')+
+    button('Копии данных','copies')+button('Проекты','projects')+'</div><p class="meta">Сборка '+build+'</p>');
+  if(action==='create-menu') sheet('Создать запись','<div class="menu-list">'+button('Текст','new-text')+
+    button('Событие','new-event')+button('Заметку','new-note')+'</div>');
   if(action==='google') googleSheet();
   if(action==='copies') sheet('Копии данных',(loadError?originalExport():button('Экспортировать JSON','export','','primary'))+
     '<label class="group">Восстановить из файла<input id="import-file" type="file" accept=".json,application/json"></label>');
@@ -681,6 +735,8 @@ document.addEventListener('click',event=>{
   if(action==='new-direction') {direction=value;chooseText();}
   if(action==='new-format') textForm(value);
   if(action==='open-text') openText(value);
+  if(action==='text-menu') sheet('Текст','<div class="menu-list">'+button('Свойства','text-settings')+
+    button('Литературная справка','writing-library')+'</div>');
   if(action==='text-settings') textForm(current().form,current());
   if(action==='projects') projects();
   if(action==='edit-project') editProject(get('projects',value));
@@ -700,6 +756,12 @@ document.addEventListener('click',event=>{
   }
   if(action==='edit-mode'||action==='preview-mode') {preview=action==='preview-mode';render();}
   if(action==='outline') outline();
+  if(action==='writing-tools') {
+    const screenplay=forms[current().form][0]==='Сценарии';
+    sheet('Инструменты','<div class="menu-list">'+button('Направляющие','writing-guide')+
+      button(screenplay?'Анализ сцен':'Анализ блоков','block-analysis')+
+      (screenplay?button('План сценария','screenplay-plan'):'')+'</div>');
+  }
   if(action==='writing-guide') writingGuide();
   if(action==='writing-library') writingLibrary();
   if(action==='screenplay-plan') screenplayPlan();
@@ -712,23 +774,6 @@ document.addEventListener('click',event=>{
     preview=false;close();render();
     document.getElementById('block-'+value)?.scrollIntoView({block:'start'});
   }
-  if(action==='hint') {
-    if(buttonNode.closest('form')) {
-      const original=buttonNode.closest('form').parentNode;
-      const clone=original.cloneNode(true);
-      original.querySelectorAll('select').forEach((select,index)=>{clone.querySelectorAll('select')[index].value=select.value;});
-      retainedForm={title:sheetTitle.textContent,clone};
-    }
-    const back=d.parent|| (buttonNode.closest('form')?'restore-form':'');
-    sheet(d.label,'<p>'+html(d.detail)+'</p>'+(back?button('← Назад','back-hint','data-id="'+html(back)+'"'):''));
-  }
-  if(action==='back-hint') {
-    if(value==='choose-text') chooseText();
-    if(value==='insert-again') insertMenu();
-    if(value==='restore-form'&&retainedForm) {sheetTitle.textContent=retainedForm.title;sheetBody.replaceChildren(...retainedForm.clone.childNodes);retainedForm=null;}
-    if(value==='writing-guide') writingGuide();
-    if(value.startsWith('block-menu:')) blockActions(value.slice(11));
-  }
   if(action==='insert') {insertion={parent:d.parent||'',after:d.after||''};insertMenu();}
   if(action==='add-block') {
     const block=makeBlock(value);
@@ -737,9 +782,13 @@ document.addEventListener('click',event=>{
       list.splice(insertion.after?list.findIndex(b=>b.id===insertion.after)+1:list.length,0,block);
     },block.id);
   }
-  if(action==='block-menu') blockActions(value);
+  if(action==='block-menu') blockActions(value,d.parent);
   if(action==='block-move') blockDestinations(value);
-  if(action==='fold') {if(folded.has(value))folded.delete(value);else folded.add(value);close();render();}
+  if(action==='fold') {
+    if(folded.has(value)) folded.delete(value); else folded.add(value);
+    render();
+    document.getElementById('toggle-'+value)?.focus({preventScroll:true});
+  }
   if(['duplicate','remove-block','block-up','block-down','move-here'].includes(action)) {
     if(action==='remove-block'&&!confirm('Удалить блок и его содержимое?')) return;
     editBlocks(blocks=>{
@@ -756,7 +805,16 @@ document.addEventListener('click',event=>{
     },value);
   }
 });
-dialog.addEventListener('close',()=>{syncOpen=false;retainedForm=null;});
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Escape') return;
+  const hint=document.querySelector('.hint[open]');
+  if(hint) {
+    hint.open=false;
+    hint.querySelector('summary').focus();
+    event.preventDefault();
+  }
+});
+dialog.addEventListener('close',()=>{syncOpen=false;});
 window.addEventListener('hashchange',()=>{preview=false;close();render();window.scrollTo(0,0);});
 window.addEventListener('beforeunload',event=>{
   if(!drafts.size) return;

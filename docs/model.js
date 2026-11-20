@@ -1,4 +1,4 @@
-import {catalog, dialogueModes} from './writing.js?v=1.3.0';
+import {catalog, dialogueModes} from './writing.js?v=1.4.0';
 export const forms = {
   'Рассказ': ['Проза', ['text'], ['epigraph','text','scene','break','proseLine','dialogue']],
   'Повесть': ['Проза', ['chapter'], ['epigraph','chapter']],

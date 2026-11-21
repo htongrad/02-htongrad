@@ -1,8 +1,8 @@
-import { forms, types, genres, directions, statuses, id, formHint, makeBlock, makeText, locate, duplicate, blank, merge, valid, collections } from './model.js?v=1.4.0';
-import {genreGroups, proseSpeech, dialogueFieldVisible, guides, flowRoles} from './writing.js?v=1.4.0';
+import { forms, types, genres, directions, statuses, id, formHint, makeBlock, makeText, locate, duplicate, blank, merge, valid, collections } from './model.js?v=1.4.1';
+import {genreGroups, proseSpeech, dialogueFieldVisible, guides, flowRoles} from './writing.js?v=1.4.1';
 
 const key = 'htongrad:records:v1';
-const build = '1.4.0';
+const build = '1.4.1';
 const tabs = {overview:'Обзор',texts:'Тексты',calendar:'Календарь',notes:'Заметки'};
 const main = document.querySelector('#main');
 const nav = document.querySelector('#nav');
@@ -561,9 +561,10 @@ function downloadJSON(content, name) {
 function originalExport() {
   return localVersion===null?'':button('Скачать исходные данные','export-original');
 }
-function restoreSheet() {
+function restoreSheet(notice = '') {
+  const context=notice?'<p>'+html(notice)+'</p>':'';
   if(loadError) {
-    sheet('Восстановление','<p>Записи в браузере не читаются. Восстановление заменит их данными из копии.</p>'+
+    sheet('Восстановление',context+'<p>Записи в браузере не читаются. Восстановление заменит их данными из копии.</p>'+
       (localVersion===null?'<p>Браузер не даёт прочитать исходные данные. Проверьте доступ к хранилищу и обновите страницу.</p>':
         '<p>Скачайте исходные данные и убедитесь, что файл появился в загрузках.</p>'+originalExport()+
         button('Подтвердить восстановление','confirm-restore',originalDownloaded?'':'disabled','primary')));
@@ -571,14 +572,17 @@ function restoreSheet() {
   }
   const incoming=merge(data,restore);
   const size=collections.reduce((sum,k)=>sum+incoming[k].length-data[k].length,0);
-  sheet('Восстановление','<p>Будет добавлено записей: '+size+'. Текущие версии совпадающих записей сохранятся.</p>'+
+  sheet('Восстановление',context+'<p>Будет добавлено записей: '+size+'. Текущие версии совпадающих записей сохранятся.</p>'+
     button('Подтвердить восстановление','confirm-restore','','primary'));
 }
-function offerRestore(value) {
+function validateBackup(value) {
   if (value?.format!=='htongrad-backup'||value.version!==1||!valid(value.data)) throw Error('Файл не является копией панели «Хтонград».');
-  restore=value.data;
+  return value.data;
+}
+function offerRestore(value, notice) {
+  restore=validateBackup(value);
   syncOpen=false;
-  restoreSheet();
+  restoreSheet(notice);
 }
 async function copyDraft() {
   const draft=drafts.get(current()?.id);
@@ -829,6 +833,6 @@ google?.init({
     return data;
   },
   refresh:googleRefresh,
-  offerRestore
+  validateBackup, offerRestore
 });
 render();

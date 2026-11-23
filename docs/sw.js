@@ -1,41 +1,36 @@
-const build = '1.4.1';
+'use strict';
 const prefix = 'htongrad-02-shell-';
-const cacheName = prefix + build;
+const version = '2.0.0';
+const cacheName = prefix + version;
 const scope = self.registration.scope;
-const index = new URL('index.html',scope);
-const assets = [
-  'app.js','model.js','writing.js','google-sync.js','style.css','manifest.webmanifest'
-].map(path=>new URL(path+'?v='+build,scope).href);
-assets.push(...['icon-192.png','icon-512.png'].map(path=>new URL(path,scope).href));
-
-self.addEventListener('install',event=>{
-  event.waitUntil((async()=>{
-    const page = await fetch(index.href+'?v='+build,{cache:'reload'});
-    if(!page.ok || !(await page.clone().text()).includes('<meta name="panel-build" content="'+build+'">')) {
-      throw Error('Сборка ещё не опубликована.');
+const shell = new URL('index.html', scope).href;
+const assets = ['manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'google-sync.js'];
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    const page = await fetch(shell, {cache: 'reload'});
+    if (!page.ok || !(await page.clone().text()).includes('<meta name="panel-build" content="' + version + '">')) {
+      throw new Error('Сборка ещё не опубликована полностью.');
     }
     const cache = await caches.open(cacheName);
-    await cache.addAll(assets.map(url=>new Request(url,{cache:'reload'})));
-    await cache.put(index,page);
+    await cache.addAll(assets.map(path => new Request(new URL(path.endsWith('.js') ? path + '?v=' + version : path, scope), {cache: 'reload'})));
+    await cache.put(shell, page);
+    await self.skipWaiting();
   })());
 });
-
-self.addEventListener('activate',event=>{
-  event.waitUntil((async()=>{
-    const keys = await caches.keys();
-    await Promise.all(keys.filter(key=>key.startsWith(prefix)&&key!==cacheName).map(key=>caches.delete(key)));
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    for (const name of await caches.keys()) {
+      if (name.startsWith(prefix) && name !== cacheName) await caches.delete(name);
+    }
     await self.clients.claim();
   })());
 });
-
-self.addEventListener('fetch',event=>{
-  const {request} = event;
-  if(request.method!=='GET') return;
+self.addEventListener('fetch', event => {
+  const request = event.request;
   const url = new URL(request.url);
-  const isPage = request.mode==='navigate' && (url.origin+url.pathname===scope || url.origin+url.pathname===index.href);
-  if(!isPage&&!assets.includes(url.href)) return;
-  event.respondWith((async()=>{
-    const cache = await caches.open(cacheName);
-    return (await cache.match(isPage?index:request)) ?? fetch(request);
-  })());
+  if (request.method !== 'GET' || !url.href.startsWith(scope)) return;
+  const path = url.pathname.slice(new URL(scope).pathname.length);
+  if (!['', 'index.html', ...assets].includes(path)) return;
+  const key = path.endsWith('.js') ? request.url : path && path !== 'index.html' ? new URL(path, scope).href : shell;
+  event.respondWith(caches.open(cacheName).then(async cache => (await cache.match(key)) || fetch(request)));
 });

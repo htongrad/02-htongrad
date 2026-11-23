@@ -237,7 +237,7 @@
     const {id,exportedAt} = settings.upload;
     const date = exportedAt.slice(0, 19).replace('T',' ').replaceAll(':','-');
     const name = 'Хтонград — ' + date + ' UTC.json';
-    const contents = JSON.stringify({format:'htongrad-backup',version:1,exportedAt,data:records});
+    const contents = JSON.stringify({format:'02-htongrad-backup',version:2,exportedAt,data:records});
     const metadata = {id,name,parents:[settings.folder],mimeType:'application/json',appProperties:{panelBackup:TAG,snapshotHash:hash}};
     const saved = await uploadSnapshot(metadata, contents);
     if (saved.status === 409) {
@@ -252,11 +252,48 @@
     return 'Копия сохранена на Диске.';
   }
   const plus = (date, days) => new Date(Date.parse(date + 'T00:00:00Z') + days*86400000).toISOString().slice(0,10);
-  function payload(event, fallbackZone) {
-    const timeZone = event.zone || fallbackZone;
-    return {summary:event.title,
-      start:event.allDay ? {date:event.date} : {dateTime:event.date+'T'+event.start+':00',timeZone},
-      end:event.allDay ? {date:plus(event.date,1)} : {dateTime:event.date+'T'+event.end+':00',timeZone}};
+  const compact = date => date.replaceAll('-','');
+  const freq = {daily:'DAILY',weekdays:'WEEKLY;BYDAY=MO,TU,WE,TH,FR',weekly:'WEEKLY',monthly:'MONTHLY',yearly:'YEARLY'};
+  function payload(event, zone) {
+    return {summary:event.title,start:event.allDay ? {date:event.date} : {dateTime:event.date+'T'+event.start+':00',timeZone:zone},
+      end:event.allDay ? {date:plus(event.date,1)} : {dateTime:event.date+'T'+event.end+':00',timeZone:zone}};
+  }
+  function calendarRows(events, fallbackZone) {
+    const rows = new Map();
+    for (const event of events) {
+      const zone = event.zone || fallbackZone;
+      const recurring = event.repeat !== 'none';
+      let start = event.date;
+      if (event.repeat === 'weekdays') {
+        while ([0,6].includes(new Date(start+'T00:00:00Z').getUTCDay())) start = plus(start,1);
+      }
+      if (!api.occurs(event,start)) continue;
+      const item = payload({...event,date:start},zone);
+      if (recurring) {
+        let rule = 'RRULE:FREQ=' + freq[event.repeat];
+        const stop = event.stopBefore ? plus(event.stopBefore,-1) : '';
+        const until = event.ending === 'date' ? event.until : '';
+        const limit = [stop,until].filter(Boolean).sort()[0];
+        if (event.ending === 'count') {
+          const beforeLimit = limit ? api.countThrough(event,limit) : event.count;
+          rule += ';COUNT=' + Math.min(beforeLimit,event.count);
+        } else if (limit) {
+          rule += ';COUNT=' + api.countThrough(event,limit);
+        }
+        const slots = Object.keys(event.exceptions).filter(slot => api.occurs(event,slot));
+        item.recurrence = [rule];
+        if (slots.length) {
+          item.recurrence.push(event.allDay ? 'EXDATE;VALUE=DATE:'+slots.map(compact).join(',')
+            : 'EXDATE;TZID='+zone+':'+slots.map(slot => compact(slot)+'T'+event.start.replace(':','')+'00').join(','));
+        }
+        for (const slot of slots) {
+          const changed = event.exceptions[slot];
+          if (changed) rows.set(event.id+':'+slot,payload(changed,zone));
+        }
+      }
+      rows.set(event.id,item);
+    }
+    return rows;
   }
   async function targetCalendar() {
     const calendars = await list(CALENDAR+'users/me/calendarList',{minAccessRole:'owner',showHidden:'true'},'items');
@@ -276,7 +313,7 @@
   async function mirror(events) {
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
     const CAL = await targetCalendar();
-    const desired = new Map(events.map(event => [event.id,payload(event,zone)]));
+    const desired = calendarRows(events,zone);
     const remote = (await list(CAL, {privateExtendedProperty:'panel='+TAG,maxResults:'2500'},'items'))
       .filter(event => event.extendedProperties?.private?.panel === TAG);
     const known = new Set(settings.mirrored || []);
@@ -289,7 +326,7 @@
       if (!current) {
         await request(CAL,json('POST',entry));
       } else if (current.extendedProperties.private.hash !== hash) {
-        await request(CAL+'/'+encodeURIComponent(current.id),json('PATCH',entry));
+        await request(CAL+'/'+encodeURIComponent(current.id),json('PATCH',{...entry,recurrence:entry.recurrence || []}));
       }
       known.add(key);
       update({mirrored:[...known]});
